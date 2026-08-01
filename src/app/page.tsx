@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import CreativeBriefForm from "@/components/creative-brief-form";
 import type { JobState, JobStatus } from "@/lib/types";
 
 const statusLabels: Record<JobStatus, string> = {
   received: "Recebido",
   transcribing: "Transcrevendo",
+  awaiting_direction: "Defina a direção",
   planning: "Planejando imagens",
   searching: "Pesquisando B-roll",
   downloading: "Baixando trechos",
@@ -86,7 +88,7 @@ export default function Home() {
   }
 
   const canApprove = job?.status === "awaiting_approval";
-  const isWorking = Boolean(job && !["awaiting_approval", "completed", "failed"].includes(job.status));
+  const isWorking = Boolean(job && !["awaiting_direction", "awaiting_approval", "completed", "failed"].includes(job.status));
 
   return (
     <main className="shell">
@@ -104,7 +106,7 @@ export default function Home() {
       <section className="intro">
         <p className="eyebrow accent">NARRAÇÃO → IMAGEM → VÍDEO</p>
         <h2>Grave a ideia.<br /><em>O rascunho se monta.</em></h2>
-        <p className="lede">Envie só a sua voz. O EditorIA transcreve, entende cada trecho, pesquisa B-roll contextual e entrega um preview para você revisar.</p>
+        <p className="lede">Envie só a sua voz. O EditorIA transcreve, conversa com você sobre a direção criativa, pesquisa B-roll contextual e entrega um preview para revisar.</p>
       </section>
 
       <section className="workspace-grid">
@@ -143,7 +145,7 @@ export default function Home() {
           <div className="panel-heading">
             <div>
               <p className="eyebrow">02 · PROCESSAMENTO</p>
-              <h3>{job ? "O editor está trabalhando" : "Aguardando uma narração"}</h3>
+              <h3>{!job ? "Aguardando uma narração" : job.status === "awaiting_direction" ? "Agora me conte como editar" : "O editor está trabalhando"}</h3>
             </div>
             {job && <span className={`status-badge status-${job.status}`}>{statusLabels[job.status]}</span>}
           </div>
@@ -154,13 +156,15 @@ export default function Home() {
               <p>Seu primeiro job aparecerá aqui.</p>
               <small>O pipeline vai mostrar transcrição, buscas, candidatos e timeline.</small>
             </div>
+          ) : job.status === "awaiting_direction" && job.creativeBrief ? (
+            <CreativeBriefForm job={job} compact onSubmitted={setJob} />
           ) : (
             <div className="job-state">
               <div className="progress-row"><span>{job.message}</span><strong>{job.progress}%</strong></div>
               <div className="progress-track"><div style={{ width: `${job.progress}%` }} /></div>
               <div className="pipeline-steps">
-                {["Transcrição", "Intenção visual", "Busca YouTube", "Preview"].map((label, index) => {
-                  const threshold = [10, 25, 45, 86][index];
+                {["Transcrição", "Direção criativa", "Busca YouTube", "Preview"].map((label, index) => {
+                  const threshold = [10, 20, 45, 86][index];
                   const done = job.progress >= threshold || job.status === "awaiting_approval" || job.status === "completed";
                   return <div className={done ? "pipeline-step done" : "pipeline-step"} key={label}><span>{done ? "✓" : "·"}</span>{label}</div>;
                 })}

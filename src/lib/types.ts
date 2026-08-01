@@ -1,6 +1,7 @@
 export type JobStatus =
   | "received"
   | "transcribing"
+  | "awaiting_direction"
   | "planning"
   | "searching"
   | "downloading"
@@ -69,6 +70,32 @@ export interface EditPlan {
   clips: PlannedClip[];
 }
 
+export type CreativeQuestionKind = "single" | "multi" | "text";
+
+export interface CreativeQuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface CreativeQuestion {
+  id: string;
+  kind: CreativeQuestionKind;
+  eyebrow?: string;
+  question: string;
+  helper?: string;
+  options?: CreativeQuestionOption[];
+  placeholder?: string;
+  required?: boolean;
+  maxSelections?: number;
+}
+
+export interface CreativeBrief {
+  questions: CreativeQuestion[];
+  answers: Record<string, string | string[]>;
+  submittedAt?: string;
+}
+
 export interface TimelineSegment {
   unitId: string;
   fileName: string;
@@ -128,6 +155,7 @@ export interface JobState {
   originalAudioName: string;
   audioFileName: string;
   brief: string;
+  creativeBrief?: CreativeBrief;
   duration?: number;
   transcript?: TranscriptDocument;
   visualUnits?: VisualUnit[];

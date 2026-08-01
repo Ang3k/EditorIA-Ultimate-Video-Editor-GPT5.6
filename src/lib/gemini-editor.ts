@@ -6,7 +6,9 @@ import {
 import path from "node:path";
 import { z } from "zod";
 import { getGeminiModel, getRequiredEnv } from "./config";
+import { fallbackCreativeQuestions, normalizeCreativeQuestions } from "./creative-brief";
 import type {
+  CreativeQuestion,
   EditPlan,
   TranscriptDocument,
   TranscriptSegment,
@@ -43,6 +45,26 @@ const EditPlanSchema = z.object({
   title: z.string(),
   visualStyle: z.string(),
   clips: z.array(PlannedClipSchema).min(1),
+});
+
+const CreativeQuestionSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["single", "multi", "text"]),
+  eyebrow: z.string().optional(),
+  question: z.string(),
+  helper: z.string().optional(),
+  options: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    description: z.string().optional(),
+  })).optional(),
+  placeholder: z.string().optional(),
+  required: z.boolean().optional(),
+  maxSelections: z.number().int().positive().optional(),
+});
+
+const CreativeQuestionSetSchema = z.object({
+  questions: z.array(CreativeQuestionSchema).min(1).max(10),
 });
 
 const TranscriptSchema = z.object({
@@ -128,6 +150,44 @@ const editPlanJsonSchema = {
     },
   },
   required: ["title", "visualStyle", "clips"],
+};
+
+const creativeQuestionJsonSchema = {
+  type: "object",
+  properties: {
+    questions: {
+      type: "array",
+      minItems: 6,
+      maxItems: 10,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          kind: { type: "string", enum: ["single", "multi", "text"] },
+          eyebrow: { type: "string" },
+          question: { type: "string" },
+          helper: { type: "string" },
+          options: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                description: { type: "string" },
+              },
+              required: ["id", "label"],
+            },
+          },
+          placeholder: { type: "string" },
+          required: { type: "boolean" },
+          maxSelections: { type: "integer" },
+        },
+        required: ["id", "kind", "question"],
+      },
+    },
+  },
+  required: ["questions"],
 };
 
 const transcriptJsonSchema = {
@@ -283,6 +343,44 @@ export async function transcribeAudio(filePath: string): Promise<TranscriptDocum
   };
 }
 
+function inputForCreativeQuestions(transcript: TranscriptDocument, brief: string, duration: number) {
+  return JSON.stringify(
+    {
+      duration,
+      initialBrief: brief || "",
+      transcript: transcript.segments,
+      fullText: transcript.text,
+    },
+    null,
+    2,
+  );
+}
+
+export async function createCreativeQuestions(
+  transcript: TranscriptDocument,
+  brief: string,
+  duration: number,
+): Promise<CreativeQuestion[]> {
+  const prompt = [
+    "Você é um diretor de criação que entrevista o usuário antes de montar um vídeo.",
+    "Crie um questionário curto, estratégico e em português para entender como a edição deve ser feita.",
+    "Faça entre 8 e 10 perguntas. Priorize respostas selecionáveis em caixas/chips; use kind single para uma escolha, multi para várias escolhas e text somente para uma referência livre.",
+    "As perguntas devem ajudar a decidir música, linguagem visual, ritmo, sensação, foco das buscas, texto na tela, formato de publicação e limites da edição.",
+    "Use exatamente estes IDs quando fizer sentido: music, visual_language, pacing, tone, search_focus, on_screen_text, format, avoid, creative_note.",
+    "As opções devem ser concretas, curtas e mutuamente compreensíveis. Não pergunte sobre coisas que já estão respondidas na narração.",
+    "Retorne somente JSON conforme o schema fornecido.",
+    "Contexto para personalizar as perguntas:",
+    inputForCreativeQuestions(transcript, brief, duration),
+  ].join("\n\n");
+
+  try {
+    const response = await generateJson(prompt, creativeQuestionJsonSchema, CreativeQuestionSetSchema);
+    return normalizeCreativeQuestions(response.questions);
+  } catch {
+    return fallbackCreativeQuestions();
+  }
+}
+
 function inputForVisualPlan(transcript: TranscriptDocument, brief: string, duration: number) {
   return JSON.stringify(
     {
@@ -322,6 +420,7 @@ export async function chooseClips(
   units: VisualUnit[],
   candidates: YouTubeCandidate[],
   duration: number,
+  creativeDirection = "",
 ): Promise<EditPlan> {
   const compactCandidates = candidates.map((candidate) => ({
     id: candidate.id,
@@ -334,12 +433,13 @@ export async function chooseClips(
 
   const prompt = [
     "Você é o montador de B-roll de um editor de vídeo.",
+    "Respeite a direção criativa respondida pelo usuário ao escolher fontes e pontos de corte.",
     "Escolha no máximo um candidato por unidade visual e não invente IDs.",
     "Use candidateId como string vazia quando não houver candidato confiável.",
     "O trecho selecionado deve cobrir a ideia narrada; estime sourceStart apenas quando houver uma pista clara no título ou descrição.",
     "A duração deve ser compatível com o intervalo da unidade.",
     "Retorne somente JSON conforme o schema fornecido.",
-    JSON.stringify({ duration, units, candidates: compactCandidates }, null, 2),
+    JSON.stringify({ duration, creativeDirection, units, candidates: compactCandidates }, null, 2),
   ].join("\n\n");
 
   const response = await generateJson(prompt, editPlanJsonSchema, EditPlanSchema);

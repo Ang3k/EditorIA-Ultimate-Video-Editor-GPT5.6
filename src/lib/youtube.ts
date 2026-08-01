@@ -96,6 +96,11 @@ function getYtDlpCommand() {
   return { command: "yt-dlp", args: [] as string[] };
 }
 
+function getYtDlpExtractorArgs() {
+  const playerClient = process.env.YTDLP_PLAYER_CLIENT?.trim() || "android";
+  return playerClient ? ["--extractor-args", `youtube:player_client=${playerClient}`] : [];
+}
+
 function parseTimestamp(value: string) {
   const parts = value.trim().split(":").map(Number);
   if (parts.some((part) => !Number.isFinite(part))) return null;
@@ -136,6 +141,7 @@ export async function locateCaptionStart(input: {
 
   await runCommand(yt.command, [
     ...yt.args,
+    ...getYtDlpExtractorArgs(),
     "--no-playlist",
     "--skip-download",
     "--ignore-errors",
@@ -187,6 +193,7 @@ export async function downloadClip(input: {
   const safeEnd = safeStart + Math.max(2, input.duration);
   await runCommand(yt.command, [
     ...yt.args,
+    ...getYtDlpExtractorArgs(),
     "--no-playlist",
     "--no-warnings",
     "--no-progress",

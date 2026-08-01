@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import CreativeBriefForm from "@/components/creative-brief-form";
 import type { EditorClip, EditorProject, EditorTrack, JobState, JobStatus } from "@/lib/types";
 
 const MIN_CLIP_DURATION = 0.25;
@@ -10,6 +11,7 @@ const MIN_CLIP_DURATION = 0.25;
 const statusLabels: Record<JobStatus, string> = {
   received: "Recebido",
   transcribing: "Transcrevendo",
+  awaiting_direction: "Defina a direção",
   planning: "Planejando",
   searching: "Pesquisando B-roll",
   downloading: "Preparando mídia",
@@ -19,6 +21,13 @@ const statusLabels: Record<JobStatus, string> = {
   completed: "Exportado",
   failed: "Falhou",
 };
+
+const processingStages: Array<{ label: string; threshold: number; statuses: JobStatus[] }> = [
+  { label: "Narração", threshold: 10, statuses: ["received", "transcribing"] },
+  { label: "Direção criativa", threshold: 20, statuses: ["planning"] },
+  { label: "Busca e B-roll", threshold: 45, statuses: ["searching", "downloading"] },
+  { label: "Preview", threshold: 86, statuses: ["rendering", "awaiting_approval", "completed"] },
+];
 
 function formatTime(seconds = 0) {
   const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
@@ -38,11 +47,91 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
+function ProcessingScreen({
+  job,
+  title,
+  message,
+  variant = "loading",
+}: {
+  job?: JobState | null;
+  title: string;
+  message: string;
+  variant?: "loading" | "error";
+}) {
+  const progress = job ? clamp(Number(job.progress) || 0, 0, 100) : 0;
+  const activeStage = job ? processingStages.findIndex((stage) => stage.statuses.includes(job.status)) : 0;
+  const activeStageIndex = activeStage >= 0 ? activeStage : progress >= 86 ? processingStages.length - 1 : 0;
+  const isError = variant === "error";
+  const isComplete = job?.status === "awaiting_approval" || job?.status === "completed";
+
+  return (
+    <main className="editor-app editor-processing-shell">
+      <header className="editor-topbar">
+        <div className="editor-brand">
+          <Link href="/" className="editor-back">←</Link>
+          <span className="brand-mark small">✦</span>
+          <div>
+            <p className="eyebrow">EDITORIA · LOCAL NLE</p>
+            <strong>{job?.originalAudioName || "Novo projeto"}</strong>
+          </div>
+        </div>
+        <div className="editor-top-actions">
+          <span className={`editor-status ${isError ? "status-failed" : "status-rendering"}`}>
+            <span className="status-dot" />{isError ? "Atenção" : "Processando"}
+          </span>
+        </div>
+      </header>
+
+      <section className="processing-frame">
+        <div className="processing-card">
+          <div className="processing-card-head">
+            <div className={`processing-mark ${isError ? "warning" : ""}`}>{isError ? "!" : "✦"}</div>
+            <div>
+              <p className="eyebrow">{isError ? "EDITORIA · ERRO" : "EDITORIA · CONSTRUINDO O RASCUNHO"}</p>
+              <h1>{title}</h1>
+              <p className="processing-message">{message}</p>
+            </div>
+          </div>
+
+          <div className="processing-progress-head">
+            <span>{isError ? "Processamento interrompido" : "Progresso do projeto"}</span>
+            <strong>{isError ? "—" : job ? `${progress}%` : "Conectando…"}</strong>
+          </div>
+          <div className={`processing-progress-track ${isError ? "error" : ""}`}>
+            {isError ? <span style={{ width: "100%" }} /> : job ? <span style={{ width: `${progress}%` }} /> : <span className="indeterminate" />}
+          </div>
+
+          <div className="processing-status-line">
+            <span><i className={isError ? "error" : ""} />{job ? statusLabels[job.status] : "Sincronizando o job"}</span>
+            <span>{isError ? "Revise a mensagem acima" : "Atualização automática a cada poucos segundos"}</span>
+          </div>
+
+          <div className="processing-stages">
+            {processingStages.map((stage, index) => {
+              const done = Boolean(job && (index < activeStageIndex || isComplete || (index === processingStages.length - 1 && progress >= 100)));
+              const current = !isError && index === activeStageIndex && !done;
+              return <div className={`processing-stage ${done ? "done" : ""} ${current ? "current" : ""}`} key={stage.label}><span>{done ? "✓" : index + 1}</span><div><strong>{stage.label}</strong><small>{done ? "Concluído" : current ? "Em andamento" : "A seguir"}</small></div></div>;
+            })}
+          </div>
+
+          <div className="processing-editor-skeleton" aria-hidden="true">
+            <div className="processing-skeleton-monitor"><span>PROGRAM MONITOR</span><i>⌁</i></div>
+            <div className="processing-skeleton-timeline"><span>TIMELINE</span><i /><i /><i /></div>
+          </div>
+          <p className="processing-footnote">Você pode deixar esta janela aberta. Assim que a timeline estiver pronta, o editor será aberto automaticamente.</p>
+          {isError && <Link className="processing-back-link" href="/">Voltar para o início</Link>}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function activeAt(clip: EditorClip, time: number) {
   return time >= clip.start && time < clip.start + clip.duration;
 }
 
 type GestureMode = "move" | "left" | "right";
+type RecorderState = "idle" | "recording" | "ready";
 
 interface Gesture {
   clipId: string;
@@ -93,6 +182,11 @@ export default function EditorWorkspace() {
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [showRecorder, setShowRecorder] = useState(false);
+  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [showSources, setShowSources] = useState(false);
@@ -101,6 +195,10 @@ export default function EditorWorkspace() {
   const gestureRef = useRef<Gesture | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const narrationInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recorderStreamRef = useRef<MediaStream | null>(null);
+  const recorderChunksRef = useRef<Blob[]>([]);
+  const recorderTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -118,6 +216,16 @@ export default function EditorWorkspace() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => () => {
+    if (recorderTimerRef.current) window.clearInterval(recorderTimerRef.current);
+    recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.onstop = null;
+      mediaRecorderRef.current.stop();
+    }
+    if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+  }, [recordedAudioUrl]);
 
   const loadProject = useCallback(async (id: string) => {
     setError("");
@@ -152,6 +260,12 @@ export default function EditorWorkspace() {
         .then((nextJob) => {
           if (!nextJob) return;
           setJob(nextJob);
+          if (nextJob.timeline || nextJob.editorProject) {
+            void fetch(`/api/jobs/${jobId}/editor`, { cache: "no-store" })
+              .then(async (projectResponse) => (projectResponse.ok ? (await projectResponse.json()) as EditorProject : null))
+              .then((nextProject) => { if (nextProject) setProject(nextProject); })
+              .catch(() => undefined);
+          }
           if (["awaiting_approval", "completed", "failed"].includes(nextJob.status)) setRendering(false);
         })
         .catch(() => undefined);
@@ -186,10 +300,19 @@ export default function EditorWorkspace() {
     () => (project?.clips || []).filter((clip) => clip.assetType === "video" && activeAt(clip, currentTime)),
     [project, currentTime],
   );
+  const activeSourceVideoClips = useMemo(
+    () => activeVideoClips.filter((clip) => Boolean(clip.sourceUrl)),
+    [activeVideoClips],
+  );
+  const activeMissingSourceClips = useMemo(
+    () => activeVideoClips.filter((clip) => !clip.sourceUrl),
+    [activeVideoClips],
+  );
   const timelineWidth = project ? Math.max(920, project.duration * zoom) : 920;
   const tickStep = project && project.duration > 180 ? 20 : project && project.duration > 90 ? 10 : 5;
   const ticks = project ? Array.from({ length: Math.ceil(project.duration / tickStep) + 1 }, (_, index) => Math.min(index * tickStep, project.duration)) : [];
   const audioClip = project?.clips.find((clip) => clip.trackId === "A1");
+  const missingSourceCount = project?.clips.filter((clip) => clip.trackId === "V1" && !clip.sourceUrl).length || 0;
 
   const saveProject = useCallback(async (nextProject: EditorProject) => {
     if (!jobId) return;
@@ -374,6 +497,91 @@ export default function EditorWorkspace() {
     }));
   }
 
+  function clearRecorderTimer() {
+    if (recorderTimerRef.current) window.clearInterval(recorderTimerRef.current);
+    recorderTimerRef.current = null;
+  }
+
+  function releaseRecorderStream() {
+    recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recorderStreamRef.current = null;
+  }
+
+  function discardRecordedAudio() {
+    clearRecorderTimer();
+    releaseRecorderStream();
+    if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+    setRecordedAudio(null);
+    setRecordedAudioUrl("");
+    setRecordingSeconds(0);
+    setRecorderState("idle");
+  }
+
+  async function startAudioRecording() {
+    if (recorderState === "recording") return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setNotice("Este navegador não oferece gravação de áudio pelo microfone.");
+      return;
+    }
+
+    discardRecordedAudio();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorderStreamRef.current = stream;
+      recorderChunksRef.current = [];
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+        .find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recorderChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        clearRecorderTimer();
+        releaseRecorderStream();
+        const blob = new Blob(recorderChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size === 0) {
+          setRecorderState("idle");
+          setNotice("A gravação ficou vazia. Tente novamente.");
+          return;
+        }
+        setRecordedAudio(blob);
+        setRecordedAudioUrl(URL.createObjectURL(blob));
+        setRecorderState("ready");
+      };
+      recorder.onerror = () => {
+        clearRecorderTimer();
+        releaseRecorderStream();
+        setRecorderState("idle");
+        setNotice("Não foi possível concluir a gravação.");
+      };
+      recorder.start(250);
+      setRecordingSeconds(0);
+      setRecorderState("recording");
+      recorderTimerRef.current = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
+    } catch {
+      releaseRecorderStream();
+      setRecorderState("idle");
+      setNotice("Permita o acesso ao microfone para gravar a narração.");
+    }
+  }
+
+  function stopAudioRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    clearRecorderTimer();
+    recorder.stop();
+  }
+
+  function useRecordedAudio() {
+    if (!recordedAudio) return;
+    const extension = recordedAudio.type.includes("mp4") ? "m4a" : "webm";
+    const file = new File([recordedAudio], `narracao-gravada-${Date.now()}.${extension}`, {
+      type: recordedAudio.type || "audio/webm",
+    });
+    void submitNarrationAudio(file);
+  }
+
   async function renderPreview() {
     if (!jobId) return;
     if (dirty && project && !(await saveProject(project))) return;
@@ -402,10 +610,7 @@ export default function EditorWorkspace() {
     setNotice("Exportação iniciada. Você pode continuar revisando a timeline.");
   }
 
-  async function createDraftFromEditor(event: ChangeEvent<HTMLInputElement>) {
-    const audio = event.target.files?.[0];
-    event.target.value = "";
-    if (!audio) return;
+  async function submitNarrationAudio(audio: File) {
     setCreatingDraft(true);
     setNotice("Enviando a nova narração para o pipeline…");
     const formData = new FormData();
@@ -426,8 +631,14 @@ export default function EditorWorkspace() {
     }
   }
 
+  function createDraftFromEditor(event: ChangeEvent<HTMLInputElement>) {
+    const audio = event.target.files?.[0];
+    event.target.value = "";
+    if (audio) void submitNarrationAudio(audio);
+  }
+
   if (!jobId && resolvingJob) {
-    return <main className="editor-loading"><div className="loading-orbit">✦</div><p>Preparando a sala de edição…</p><small>Localizando o último projeto.</small></main>;
+    return <ProcessingScreen title="Preparando a sala de edição" message="Localizando o último projeto salvo." />;
   }
 
   if (!jobId) {
@@ -435,11 +646,42 @@ export default function EditorWorkspace() {
   }
 
   if (error) {
-    return <main className="editor-loading"><div className="loading-orbit warning">!</div><p>{error}</p><Link href="/">Voltar para o início</Link></main>;
+    return <ProcessingScreen title="Não foi possível abrir o editor" message={error} variant="error" />;
   }
 
   if (!job || !project) {
-    return <main className="editor-loading"><div className="loading-orbit">✦</div><p>Preparando a sala de edição…</p><small>Carregando timeline, narração e camadas.</small></main>;
+    return <ProcessingScreen job={job} title="Preparando a sala de edição" message={job?.message || "Carregando timeline, narração e camadas."} />;
+  }
+
+  if (job.status === "awaiting_direction" && job.creativeBrief) {
+    return (
+      <main className="editor-app creative-brief-app">
+        <header className="editor-topbar">
+          <div className="editor-brand">
+            <Link href="/" className="editor-back">←</Link>
+            <span className="brand-mark small">✦</span>
+            <div>
+              <p className="eyebrow">EDITORIA · DIREÇÃO CRIATIVA</p>
+              <strong>{job.originalAudioName}</strong>
+            </div>
+          </div>
+          <div className="editor-top-actions">
+            <span className={`editor-status status-${job.status}`}><span className="status-dot" />{statusLabels[job.status]}</span>
+          </div>
+        </header>
+        <div className="creative-brief-page">
+          <CreativeBriefForm job={job} onSubmitted={setJob} />
+        </div>
+      </main>
+    );
+  }
+
+  const isBuildingDraft = Boolean(
+    !job.timeline
+    && ["received", "transcribing", "planning", "searching", "downloading", "rendering"].includes(job.status),
+  );
+  if (isBuildingDraft) {
+    return <ProcessingScreen job={job} title="Montando o primeiro corte" message={job.message || "A IA está pesquisando e preparando a timeline."} />;
   }
 
   const isExported = job.status === "completed" && Boolean(job.media?.final);
@@ -475,6 +717,7 @@ export default function EditorWorkspace() {
             <div className="ai-card-head"><span className="ai-card-label">AI ASSIST</span><kbd>⌘K</kbd></div>
             <strong>Rascunho em edição</strong>
             <p>A inteligência artificial organizou o primeiro corte a partir da narração.</p>
+            {missingSourceCount > 0 && <p className="ai-warning">{missingSourceCount} trecho(s) de B-roll estão offline e aparecem marcados na timeline.</p>}
             <div className="ai-status-row"><span className="ai-live-dot" /><small>{statusLabels[job.status]}</small><b>{formatTime(project.duration)}</b></div>
             <div className="ai-card-progress"><span style={{ width: `${Math.min(100, job.progress)}%` }} /></div>
           </div>
@@ -484,6 +727,32 @@ export default function EditorWorkspace() {
             <div className="project-file"><span className="file-icon audio">◒</span><div><strong>{job.originalAudioName}</strong><small>Narração principal · {formatTime(project.duration)}</small></div></div>
             <input ref={narrationInputRef} className="sidebar-upload" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm" onChange={createDraftFromEditor} />
             <button className="sidebar-action" onClick={() => narrationInputRef.current?.click()} disabled={creatingDraft}>＋ {creatingDraft ? "Enviando narração…" : "Nova narração"}</button>
+            <button className="sidebar-action" onClick={() => setShowRecorder((value) => !value)} disabled={creatingDraft}>
+              <span className={recorderState === "recording" ? "recording-icon active" : "recording-icon"}>●</span>
+              {showRecorder ? "Fechar gravador" : "Gravar narração"}
+            </button>
+            {showRecorder && (
+              <div className={`voice-recorder ${recorderState}`}>
+                <div className="voice-recorder-head">
+                  <div><span className="voice-recorder-dot" /><strong>{recorderState === "recording" ? "Gravando agora" : recorderState === "ready" ? "Gravação pronta" : "Gravar pelo microfone"}</strong></div>
+                  <span className="voice-recorder-time">{formatTime(recordingSeconds)}</span>
+                </div>
+                {recorderState === "recording" ? (
+                  <button className="voice-recorder-button stop" type="button" onClick={stopAudioRecording}>Parar gravação</button>
+                ) : recorderState === "ready" && recordedAudioUrl ? (
+                  <>
+                    <audio className="voice-recorder-audio" controls src={recordedAudioUrl} />
+                    <div className="voice-recorder-actions">
+                      <button className="voice-recorder-button secondary" type="button" onClick={() => void startAudioRecording()}>Regravar</button>
+                      <button className="voice-recorder-button use" type="button" onClick={useRecordedAudio} disabled={creatingDraft}>Usar gravação →</button>
+                    </div>
+                  </>
+                ) : (
+                  <button className="voice-recorder-button start" type="button" onClick={() => void startAudioRecording()}>Começar a gravar</button>
+                )}
+                <small>{recorderState === "recording" ? "Fale normalmente. O áudio será enviado somente quando você escolher usar a gravação." : "Use um microfone próximo e grave uma nova narração para este projeto."}</small>
+              </div>
+            )}
           </div>
 
           <div className="sidebar-section">
@@ -509,7 +778,7 @@ export default function EditorWorkspace() {
           </div>
           <div className="preview-stage-wrap">
             <div className="preview-stage">
-              {activeVideoClips.length > 0 ? activeVideoClips.map((clip) => (
+              {activeSourceVideoClips.length > 0 ? activeSourceVideoClips.map((clip) => (
                 <video
                   key={clip.id}
                   ref={(element) => { if (element) videoRefs.current[clip.id] = element; else delete videoRefs.current[clip.id]; }}
@@ -519,9 +788,9 @@ export default function EditorWorkspace() {
                   playsInline
                   preload="auto"
                 />
-              )) : previewFallback ? <video className="preview-video preview-fallback" src={previewFallback} muted playsInline /> : <div className="preview-placeholder"><span>✦</span><p>Selecione um trecho para começar.</p></div>}
+              )) : activeMissingSourceClips.length > 0 ? <div className="preview-placeholder missing-source"><span>!</span><p>Fonte de vídeo indisponível neste trecho.</p><small>Revise as buscas ou substitua o B-roll no inspector.</small></div> : previewFallback ? <video className="preview-video preview-fallback" src={previewFallback} muted playsInline /> : <div className="preview-placeholder"><span>✦</span><p>Selecione um trecho para começar.</p></div>}
               <div className="preview-vignette" />
-              <div className="preview-meta"><span>16:9</span><span>{activeVideoClips[0]?.label || "V1 · sem sinal"}</span></div>
+              <div className="preview-meta"><span>16:9</span><span>{activeSourceVideoClips[0]?.label || activeMissingSourceClips[0]?.label || "V1 · sem sinal"}</span></div>
             </div>
           </div>
           {audioClip?.assetFileName && jobId && <audio ref={audioRef} src={mediaUrl(jobId, audioClip.assetFileName)} preload="auto" />}
@@ -545,10 +814,11 @@ export default function EditorWorkspace() {
                     const clips = project.clips.filter((clip) => clip.trackId === track.id);
                     return <div className={`track-lane track-lane-${track.id.toLowerCase()}`} key={track.id}>{clips.map((clip) => {
                       const selected = clip.id === selectedClipId;
+                      const missingSource = track.id === "V1" && !clip.sourceUrl;
                       const clipStyle = { left: clip.start * zoom, width: Math.max(18, clip.duration * zoom) } as CSSProperties;
-                      return <div className={`timeline-clip clip-${track.id.toLowerCase()} ${selected ? "selected" : ""}`} key={clip.id} style={clipStyle} onPointerDown={(event) => startGesture(event, clip, "move")} onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); }} title={clip.label}>
+                      return <div className={`timeline-clip clip-${track.id.toLowerCase()} ${selected ? "selected" : ""} ${missingSource ? "missing-source" : ""}`} key={clip.id} style={clipStyle} onPointerDown={(event) => startGesture(event, clip, "move")} onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); }} title={missingSource ? `${clip.label} — fonte indisponível` : clip.label}>
                         {selected && track.id === "V1" && <button className="trim-handle left" onPointerDown={(event) => startGesture(event, clip, "left")} aria-label="Ajustar início" />}
-                        <span className="clip-role">{track.kind === "audio" ? "VOICE" : "B-ROLL"}</span><span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
+                        <span className="clip-role">{track.kind === "audio" ? "VOICE" : missingSource ? "B-ROLL · OFFLINE" : "B-ROLL"}</span><span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
                         {selected && track.id === "V1" && <button className="trim-handle right" onPointerDown={(event) => startGesture(event, clip, "right")} aria-label="Ajustar fim" />}
                       </div>;
                     })}</div>;
@@ -569,6 +839,7 @@ export default function EditorWorkspace() {
               <div className="inspector-divider" />
               <div className="inspector-block"><span className="eyebrow">INTENÇÃO VISUAL</span><p>{selectedUnit?.visualBrief || "Trecho de apoio neutro da timeline."}</p>{selectedUnit && <div className="confidence-row"><span>Confiança da IA</span><strong>{Math.round(selectedUnit.confidence * 100)}%</strong></div>}</div>
               <div className="inspector-block"><span className="eyebrow">NARRAÇÃO</span><p className="narration-quote">{selectedUnit?.narration || "Este trecho cobre uma transição da narração."}</p></div>
+              {selectedClip.trackId === "V1" && !selectedClip.sourceUrl && <div className="source-warning"><strong>Fonte indisponível</strong><p>O download deste B-roll não foi concluído. O trecho está marcado como placeholder e não será tratado como vídeo real.</p></div>}
               {selectedClip.sourceUrl && <a className="source-link" href={selectedClip.sourceUrl} target="_blank" rel="noreferrer">Abrir fonte original ↗</a>}
               <div className="inspector-actions"><button onClick={splitSelected}>✂ Dividir no playhead</button><button className="danger-action" onClick={deleteSelected}>Excluir trecho</button></div>
             </div>

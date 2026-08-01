@@ -8,7 +8,8 @@ import {
   saveArtifact,
   updateJob,
 } from "./job-store";
-import { chooseClips, createVisualPlan, transcribeAudio } from "./gemini-editor";
+import { chooseClips, createCreativeQuestions, createVisualPlan, transcribeAudio } from "./gemini-editor";
+import { creativeBriefToPrompt } from "./creative-brief";
 import { downloadClip, locateCaptionStart, searchCandidates } from "./youtube";
 import { createEditorProject } from "./editor-project";
 import type { EditPlan, JobState, TimelineSegment, VisualUnit, YouTubeCandidate } from "./types";
@@ -100,18 +101,40 @@ async function runPipeline(jobId: string) {
   const audioPath = getJobFile(jobId, job.audioFileName);
 
   try {
-    await setProgress(jobId, 5, "Transcrevendo a narração…", "transcribing");
-    const transcriptionPath = path.join(jobDirectory, "audio-for-transcription.mp3");
-    const audioForTranscription = await prepareAudioForTranscription(audioPath, transcriptionPath);
-    const detectedDuration = await getMediaDuration(audioPath);
-    const transcript = await transcribeAudio(audioForTranscription);
-    const duration = Math.max(detectedDuration, transcript.duration || 0);
-    transcript.duration = duration;
-    await saveArtifact(jobId, "transcript.json", transcript);
-    await updateJob(jobId, { transcript, duration });
+    if (!job.transcript) {
+      await setProgress(jobId, 5, "Transcrevendo a narração…", "transcribing");
+      const transcriptionPath = path.join(jobDirectory, "audio-for-transcription.mp3");
+      const audioForTranscription = await prepareAudioForTranscription(audioPath, transcriptionPath);
+      const detectedDuration = await getMediaDuration(audioPath);
+      const transcript = await transcribeAudio(audioForTranscription);
+      const duration = Math.max(detectedDuration, transcript.duration || 0);
+      transcript.duration = duration;
+      const questions = await createCreativeQuestions(transcript, job.brief, duration);
+      const creativeBrief = { questions, answers: {} };
+      await saveArtifact(jobId, "transcript.json", transcript);
+      await saveArtifact(jobId, "creative-questions.json", questions);
+      await saveArtifact(jobId, "creative-brief.json", creativeBrief);
+      await updateJob(jobId, {
+        transcript,
+        duration,
+        creativeBrief,
+        status: "awaiting_direction",
+        progress: 18,
+        message: "A narração está pronta. Defina a direção criativa antes da busca.",
+      });
+      return;
+    }
+
+    if (!job.creativeBrief?.submittedAt) {
+      throw new Error("A direção criativa ainda não foi respondida.");
+    }
+
+    const transcript = job.transcript;
+    const duration = Math.max(job.duration || 0, transcript.duration || 0);
+    const creativeDirection = creativeBriefToPrompt(job.brief, job.creativeBrief);
 
     await setProgress(jobId, 22, "Entendendo o que deve aparecer em cada trecho…", "planning");
-    const plannedUnits = await createVisualPlan(transcript, job.brief, duration);
+    const plannedUnits = await createVisualPlan(transcript, creativeDirection, duration);
     const visualUnits = ensureVisualCoverage(plannedUnits, duration);
     await saveArtifact(jobId, "visual-units.json", visualUnits);
     await updateJob(jobId, { visualUnits });
@@ -122,7 +145,7 @@ async function runPipeline(jobId: string) {
     await updateJob(jobId, { candidates });
 
     await setProgress(jobId, 52, "Escolhendo os candidatos e montando o plano de edição…", "planning");
-    const draftPlan = await chooseClips(visualUnits, candidates, duration);
+    const draftPlan = await chooseClips(visualUnits, candidates, duration, creativeDirection);
     const editPlan = normalizeEditPlan(draftPlan, visualUnits, candidates);
     await saveArtifact(jobId, "edit-plan.json", editPlan);
     await updateJob(jobId, { editPlan });
@@ -160,7 +183,7 @@ async function runPipeline(jobId: string) {
           start: sourceStart,
           duration: durationForClip,
         })
-          .then(() => true)
+          .then(async () => getMediaDuration(rawPath).then((sourceDuration) => sourceDuration > 0.25).catch(() => false))
           .catch(() => false);
       }
 
@@ -177,8 +200,8 @@ async function runPipeline(jobId: string) {
         unitId: planned.unitId,
         fileName: `segments/segment-${index}.mp4`,
         duration: durationForClip,
-        sourceUrl: candidate?.url,
-        sourceTitle: candidate?.title,
+        sourceUrl: hasSource ? candidate?.url : undefined,
+        sourceTitle: hasSource ? candidate?.title : undefined,
       });
       await setProgress(
         jobId,
@@ -191,7 +214,12 @@ async function runPipeline(jobId: string) {
     await saveArtifact(jobId, "timeline.json", timeline);
     const editorProject = createEditorProject({ ...job, duration, visualUnits, editPlan, timeline });
     await saveArtifact(jobId, "editor-project.json", editorProject);
-    await updateJob(jobId, { timeline, editorProject });
+    const unavailableSources = timeline.filter((segment) => !segment.sourceUrl).length;
+    await updateJob(jobId, {
+      timeline,
+      editorProject,
+      ...(unavailableSources > 0 ? { message: `Preview pronto com ${unavailableSources} trecho(s) sem fonte local; revise as buscas.` } : {}),
+    });
 
     await setProgress(jobId, 86, "Renderizando o preview…", "rendering");
     await renderTimeline({
@@ -204,7 +232,9 @@ async function runPipeline(jobId: string) {
     await updateJob(jobId, {
       status: "awaiting_approval",
       progress: 100,
-      message: "Preview pronto para revisão.",
+      message: unavailableSources > 0
+        ? `Preview pronto para revisão; ${unavailableSources} trecho(s) ficaram sem fonte local.`
+        : "Preview pronto para revisão.",
       media: { preview: "preview.mp4" },
     });
   } catch (error) {
@@ -227,6 +257,10 @@ export function startJobPipeline(jobId: string) {
   });
   activeJobs.set(jobId, promise);
   return promise;
+}
+
+export function startCreativeBriefPipeline(jobId: string) {
+  return startJobPipeline(jobId);
 }
 
 async function runFinalRender(jobId: string) {
