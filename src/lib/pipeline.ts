@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createPlaceholder, getMediaDuration, normalizeVideo, prepareAudioForTranscription, renderTimeline } from "./ffmpeg";
+import { createPlaceholder, getMediaDuration, normalizeVideo, prepareAudioForTranscription, renderEditorProject, renderTimeline } from "./ffmpeg";
 import {
   getJobDirectory,
   getJobFile,
@@ -10,6 +10,7 @@ import {
 } from "./job-store";
 import { chooseClips, createVisualPlan, transcribeAudio } from "./gemini-editor";
 import { downloadClip, locateCaptionStart, searchCandidates } from "./youtube";
+import { createEditorProject } from "./editor-project";
 import type { EditPlan, JobState, TimelineSegment, VisualUnit, YouTubeCandidate } from "./types";
 
 const activeJobs = new Map<string, Promise<void>>();
@@ -188,7 +189,9 @@ async function runPipeline(jobId: string) {
     }
 
     await saveArtifact(jobId, "timeline.json", timeline);
-    await updateJob(jobId, { timeline });
+    const editorProject = createEditorProject({ ...job, duration, visualUnits, editPlan, timeline });
+    await saveArtifact(jobId, "editor-project.json", editorProject);
+    await updateJob(jobId, { timeline, editorProject });
 
     await setProgress(jobId, 86, "Renderizando o preview…", "rendering");
     await renderTimeline({
@@ -228,24 +231,74 @@ export function startJobPipeline(jobId: string) {
 
 async function runFinalRender(jobId: string) {
   const job = await readJob(jobId);
-  if (!job.timeline || job.timeline.length === 0) {
+  if ((!job.timeline || job.timeline.length === 0) && !job.editorProject) {
     throw new Error("O job ainda não possui uma timeline renderizável.");
   }
 
   await updateJob(jobId, { status: "exporting", progress: 10, message: "Exportando a versão final…" });
-  await renderTimeline({
-    jobDirectory: getJobDirectory(jobId),
-    segments: job.timeline,
-    narrationPath: getJobFile(jobId, job.audioFileName),
-    outputPath: getJobFile(jobId, "final.mp4"),
-    quality: "final",
-  });
+  if (job.editorProject) {
+    await renderEditorProject({
+      jobDirectory: getJobDirectory(jobId),
+      project: job.editorProject,
+      narrationPath: getJobFile(jobId, job.audioFileName),
+      outputPath: getJobFile(jobId, "final.mp4"),
+      quality: "final",
+    });
+  } else {
+    await renderTimeline({
+      jobDirectory: getJobDirectory(jobId),
+      segments: job.timeline || [],
+      narrationPath: getJobFile(jobId, job.audioFileName),
+      outputPath: getJobFile(jobId, "final.mp4"),
+      quality: "final",
+    });
+  }
   await updateJob(jobId, {
     status: "completed",
     progress: 100,
     message: "Exportação final concluída.",
     media: { ...job.media, final: "final.mp4" },
   });
+}
+
+async function runEditorPreviewRender(jobId: string) {
+  const job = await readJob(jobId);
+  if (!job.editorProject) {
+    throw new Error("O projeto do editor ainda não foi criado.");
+  }
+
+  await updateJob(jobId, { status: "rendering", progress: 90, message: "Atualizando o preview da timeline…" });
+  await renderEditorProject({
+    jobDirectory: getJobDirectory(jobId),
+    project: job.editorProject,
+    narrationPath: getJobFile(jobId, job.audioFileName),
+    outputPath: getJobFile(jobId, "preview.mp4"),
+    quality: "preview",
+  });
+  await updateJob(jobId, {
+    status: "awaiting_approval",
+    progress: 100,
+    message: "Preview atualizado para revisão.",
+    media: { ...job.media, preview: "preview.mp4" },
+  });
+}
+
+export function startEditorPreviewRender(jobId: string) {
+  const existing = activeJobs.get(jobId);
+  if (existing) return existing;
+
+  const promise = runEditorPreviewRender(jobId).catch(async (error) => {
+    await updateJob(jobId, {
+      status: "failed",
+      progress: 100,
+      message: "A atualização do preview falhou.",
+      error: error instanceof Error ? error.message : "Falha desconhecida ao atualizar o preview.",
+    });
+  }).finally(() => {
+    activeJobs.delete(jobId);
+  });
+  activeJobs.set(jobId, promise);
+  return promise;
 }
 
 export function startFinalRender(jobId: string) {

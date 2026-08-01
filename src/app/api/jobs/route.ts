@@ -1,13 +1,20 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { createJob, getJobFile } from "@/lib/job-store";
+import { createJob, getJobFile, listJobs } from "@/lib/job-store";
 import { startJobPipeline } from "@/lib/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const allowedExtensions = new Set([".mp3", ".wav", ".m4a", ".mp4", ".mpeg", ".mpga", ".webm"]);
+
+export async function GET(request: Request) {
+  const latest = new URL(request.url).searchParams.get("latest");
+  if (latest !== "1") return NextResponse.json({ jobs: await listJobs() });
+  const job = (await listJobs())[0];
+  return job ? NextResponse.json(job) : NextResponse.json({ error: "Nenhum job encontrado." }, { status: 404 });
+}
 
 export async function POST(request: Request) {
   try {

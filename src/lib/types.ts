@@ -77,6 +77,42 @@ export interface TimelineSegment {
   sourceTitle?: string;
 }
 
+export type EditorTrackKind = "video" | "audio";
+
+export interface EditorTrack {
+  id: "V2" | "V1" | "A1";
+  kind: EditorTrackKind;
+  name: string;
+  muted: boolean;
+  locked: boolean;
+}
+
+export interface EditorClip {
+  id: string;
+  trackId: EditorTrack["id"];
+  unitId?: string;
+  assetType: EditorTrackKind;
+  assetFileName?: string;
+  label: string;
+  start: number;
+  duration: number;
+  sourceStart: number;
+  sourceDuration: number;
+  sourceUrl?: string;
+  sourceTitle?: string;
+}
+
+export interface EditorProject {
+  version: 1;
+  title: string;
+  width: 1920;
+  height: 1080;
+  fps: 30;
+  duration: number;
+  tracks: EditorTrack[];
+  clips: EditorClip[];
+}
+
 export interface JobMedia {
   preview?: string;
   final?: string;
@@ -98,6 +134,7 @@ export interface JobState {
   candidates?: YouTubeCandidate[];
   editPlan?: EditPlan;
   timeline?: TimelineSegment[];
+  editorProject?: EditorProject;
   media?: JobMedia;
   error?: string;
 }

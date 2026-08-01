@@ -8,7 +8,7 @@ export function getRequiredEnv(name: "GEMINI_API_KEY" | "YOUTUBE_API_KEY") {
 }
 
 export function getGeminiModel() {
-  return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
+  return process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 }
 
 export function getMaxYouTubeSearches() {

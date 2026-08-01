@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { JobState } from "./types";
 
@@ -71,6 +71,17 @@ export async function saveJob(job: JobState) {
 export async function updateJob(jobId: string, patch: Partial<JobState>) {
   const current = await readJob(jobId);
   return saveJob({ ...current, ...patch });
+}
+
+export async function listJobs() {
+  const entries = await readdir(jobsRoot, { withFileTypes: true }).catch(() => []);
+  const jobs = await Promise.all(entries
+    .filter((entry) => entry.isDirectory())
+    .map(async (entry) => readJob(entry.name).catch(() => null)));
+
+  return jobs
+    .filter((job): job is JobState => Boolean(job))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export async function saveArtifact(jobId: string, fileName: string, value: unknown) {

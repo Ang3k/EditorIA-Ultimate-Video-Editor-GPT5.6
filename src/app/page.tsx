@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { JobState, JobStatus } from "@/lib/types";
 
 const statusLabels: Record<JobStatus, string> = {
@@ -97,7 +98,7 @@ export default function Home() {
             <h1>EditorIA</h1>
           </div>
         </div>
-        <div className="model-pill"><span className="pulse" /> Gemini 3.5 Flash-Lite</div>
+        <div className="model-pill"><span className="pulse" /> Gemini 3.6 Flash</div>
       </header>
 
       <section className="intro">
@@ -201,6 +202,7 @@ export default function Home() {
               <div><p className="eyebrow">04 · REVISÃO</p><h3>Preview editável</h3></div>
               {canApprove && <button className="approve-button" onClick={approveDraft}>Aprovar e exportar</button>}
             </div>
+            {previewUrl && <Link className="editor-link" href={`/editor?job=${job.id}`}>Abrir no editor →</Link>}
             {previewUrl ? (
               <div className="video-wrap"><video controls src={previewUrl} /></div>
             ) : (

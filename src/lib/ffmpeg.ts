@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { EditorProject } from "./types";
 
 export async function runCommand(command: string, args: string[], options?: { cwd?: string }) {
   return new Promise<string>((resolve, reject) => {
@@ -156,4 +157,85 @@ export async function renderTimeline(input: {
 
   await runCommand("ffmpeg", videoArgs);
   await unlink(concatPath).catch(() => undefined);
+}
+
+export async function renderEditorProject(input: {
+  jobDirectory: string;
+  project: EditorProject;
+  narrationPath: string;
+  outputPath: string;
+  quality: "preview" | "final";
+}) {
+  const duration = Math.max(0.1, input.project.duration);
+  const videoClips = input.project.clips
+    .filter((clip) => clip.assetType === "video" && clip.assetFileName && (clip.trackId === "V1" || clip.trackId === "V2"))
+    .sort((left, right) => {
+      const trackOrder = { V1: 0, V2: 1 };
+      return (trackOrder[left.trackId as "V1" | "V2"] || 0) - (trackOrder[right.trackId as "V1" | "V2"] || 0) || left.start - right.start;
+    });
+  const audioTrack = input.project.tracks.find((track) => track.id === "A1");
+  const args = [
+    "-y",
+    "-f",
+    "lavfi",
+    "-t",
+    duration.toFixed(3),
+    "-i",
+    `color=c=0x151a2b:s=${input.project.width}x${input.project.height}:r=${input.project.fps}`,
+  ];
+
+  for (const clip of videoClips) {
+    args.push(
+      "-ss",
+      Math.max(0, clip.sourceStart).toFixed(3),
+      "-t",
+      Math.min(clip.duration, clip.sourceDuration).toFixed(3),
+      "-i",
+      path.join(input.jobDirectory, clip.assetFileName as string),
+    );
+  }
+
+  const audioInputIndex = videoClips.length + 1;
+  args.push("-i", input.narrationPath);
+
+  const filters = ["[0:v]format=yuv420p[base0]"];
+  let currentLabel = "base0";
+  videoClips.forEach((clip, index) => {
+    const inputIndex = index + 1;
+    const clipLabel = `clip${index}`;
+    const nextLabel = `mix${index}`;
+    const clipDuration = Math.min(clip.duration, clip.sourceDuration);
+    filters.push(
+      `[${inputIndex}:v]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS+${Math.max(0, clip.start).toFixed(3)}/TB,scale=${input.project.width}:${input.project.height}:force_original_aspect_ratio=increase,crop=${input.project.width}:${input.project.height},setsar=1,format=yuv420p[${clipLabel}]`,
+      `[${currentLabel}][${clipLabel}]overlay=0:0:eof_action=pass:shortest=0:format=auto[${nextLabel}]`,
+    );
+    currentLabel = nextLabel;
+  });
+  filters.push(`[${currentLabel}]format=yuv420p[vout]`);
+
+  args.push(
+    "-filter_complex",
+    filters.join(";"),
+    "-map",
+    "[vout]",
+  );
+  if (audioTrack?.muted) {
+    args.push("-an");
+  } else {
+    args.push("-map", `${audioInputIndex}:a:0`, "-af", "apad");
+  }
+  args.push(
+    "-t",
+    duration.toFixed(3),
+    "-c:v",
+    "libx264",
+    "-preset",
+    input.quality === "final" ? "medium" : "veryfast",
+    "-crf",
+    input.quality === "final" ? "18" : "24",
+    ...(audioTrack?.muted ? [] : ["-c:a", "aac", "-b:a", "192k"]),
+    input.outputPath,
+  );
+
+  await runCommand("ffmpeg", args);
 }
