@@ -1,4 +1,4 @@
-export function getRequiredEnv(name: "OPENAI_API_KEY" | "YOUTUBE_API_KEY") {
+export function getRequiredEnv(name: "GEMINI_API_KEY" | "YOUTUBE_API_KEY") {
   const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`A variável ${name} não está configurada no .env.local.`);
@@ -7,12 +7,8 @@ export function getRequiredEnv(name: "OPENAI_API_KEY" | "YOUTUBE_API_KEY") {
   return value;
 }
 
-export function getEditorModel() {
-  return process.env.OPENAI_EDITOR_MODEL?.trim() || "gpt-5.6-luna";
-}
-
-export function getReasoningEffort() {
-  return process.env.OPENAI_REASONING_EFFORT?.trim() || "max";
+export function getGeminiModel() {
+  return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
 }
 
 export function getMaxYouTubeSearches() {

@@ -97,7 +97,7 @@ export default function Home() {
             <h1>EditorIA</h1>
           </div>
         </div>
-        <div className="model-pill"><span className="pulse" /> GPT-5.6 Luna · máximo</div>
+        <div className="model-pill"><span className="pulse" /> Gemini 3.5 Flash-Lite</div>
       </header>
 
       <section className="intro">

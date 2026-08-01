@@ -9,8 +9,8 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@google/genai": "^2.15.0",
     "next": "latest",
-    "openai": "latest",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"

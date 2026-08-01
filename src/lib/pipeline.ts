@@ -8,7 +8,7 @@ import {
   saveArtifact,
   updateJob,
 } from "./job-store";
-import { chooseClips, createVisualPlan, transcribeAudio } from "./openai-editor";
+import { chooseClips, createVisualPlan, transcribeAudio } from "./gemini-editor";
 import { downloadClip, locateCaptionStart, searchCandidates } from "./youtube";
 import type { EditPlan, JobState, TimelineSegment, VisualUnit, YouTubeCandidate } from "./types";
 

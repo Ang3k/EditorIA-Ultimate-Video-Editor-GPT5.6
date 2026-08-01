@@ -5,8 +5,7 @@ Editor local que transforma uma narração em um rascunho de vídeo com B-roll c
 ## Stack do MVP
 
 - Next.js + React + TypeScript para a interface local.
-- OpenAI Responses API com saída estruturada para separar a narração em unidades visuais e criar o plano de edição.
-- `whisper-1` para transcrição com timestamps de segmentos e palavras.
+- Gemini API com saída JSON estruturada para transcrever a narração, separar unidades visuais e criar o plano de edição.
 - YouTube Data API v3 para descoberta de vídeos.
 - `yt-dlp` para baixar candidatos públicos selecionados.
 - FFmpeg/FFprobe para cortes, normalização, preview e exportação.
@@ -27,7 +26,7 @@ npm run dev
 
 Abra `http://localhost:3000`.
 
-O arquivo `.env.local` deve conter as chaves novas, criadas depois da rotação das credenciais expostas anteriormente. Não cole essas chaves no chat nem faça commit delas.
+O arquivo `.env.local` deve conter `GEMINI_API_KEY` e `YOUTUBE_API_KEY`. Não cole essas chaves no chat nem faça commit delas.
 
 ## Fluxo atual
 
