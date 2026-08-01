@@ -2,8 +2,8 @@ import type { EditorClip, EditorProject, EditorTrack, JobState } from "./types";
 
 export const EDITOR_TRACKS: EditorTrack[] = [
   { id: "V2", kind: "video", name: "OVERLAYS", muted: false, locked: false },
-  { id: "V1", kind: "video", name: "VÍDEO PRINCIPAL", muted: false, locked: false },
-  { id: "A1", kind: "audio", name: "NARRAÇÃO", muted: false, locked: false },
+  { id: "V1", kind: "video", name: "B-ROLL", muted: false, locked: false },
+  { id: "A1", kind: "audio", name: "VOICEOVER", muted: false, locked: false },
 ];
 
 function finite(value: unknown, fallback: number) {

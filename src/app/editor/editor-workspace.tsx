@@ -452,41 +452,42 @@ export default function EditorWorkspace() {
           <Link href="/" className="editor-back">←</Link>
           <span className="brand-mark small">✦</span>
           <div>
-            <p className="eyebrow">EDITORIA / STUDIO</p>
+            <p className="eyebrow">EDITORIA · LOCAL NLE</p>
             <strong>{project.title}</strong>
           </div>
         </div>
+        <div className="editor-modebar" aria-label="Workspace"><span className="active">EDIT</span><span>AI ASSIST</span><span>DELIVER</span></div>
         <div className="editor-top-actions">
           <span className={`editor-status status-${job.status}`}><span className="status-dot" />{statusLabels[job.status]}</span>
           <button className="icon-button top-icon" onClick={undo} disabled={history.length === 0} title="Desfazer">↶</button>
           <button className="icon-button top-icon" onClick={redo} disabled={future.length === 0} title="Refazer">↷</button>
           <button className="ghost-button" onClick={() => void saveProject(project)} disabled={saving}>{saving ? "Salvando…" : dirty ? "Salvar alterações" : "Salvo"}</button>
           <button className="primary-small" onClick={() => void renderPreview()} disabled={rendering || saving}>{rendering ? "Renderizando…" : "Atualizar preview"}</button>
-          <button className="export-button" onClick={() => void exportVideo()} disabled={job.status === "exporting" || rendering}>{isExported ? "Exportado" : "Exportar vídeo"}<span>↗</span></button>
+          <button className="export-button" onClick={() => void exportVideo()} disabled={job.status === "exporting" || rendering}>{isExported ? "Exportar novamente" : "Exportar vídeo"}<span>↗</span></button>
           {isExported && job.media?.final && <a className="export-download" href={mediaUrl(job.id, job.media.final)} download="editoria-final.mp4">Baixar final ↓</a>}
         </div>
       </header>
 
       <div className="editor-layout">
         <aside className="editor-sidebar left-sidebar">
-          <div className="sidebar-heading"><span className="eyebrow">ASSISTENTE IA</span><span className="ai-spark">✦</span></div>
+          <div className="sidebar-heading"><span className="eyebrow">PROJECT</span><span className="ai-spark">✦</span></div>
           <div className="ai-card">
-            <span className="ai-card-label">RASCUNHO AUTOMÁTICO</span>
-            <strong>A IA montou a primeira versão.</strong>
-            <p>Agora você pode ajustar o ritmo, os trechos e as camadas sem sair do projeto.</p>
+            <div className="ai-card-head"><span className="ai-card-label">AI ASSIST</span><kbd>⌘K</kbd></div>
+            <strong>Rascunho em edição</strong>
+            <p>A inteligência artificial organizou o primeiro corte a partir da narração.</p>
+            <div className="ai-status-row"><span className="ai-live-dot" /><small>{statusLabels[job.status]}</small><b>{formatTime(project.duration)}</b></div>
             <div className="ai-card-progress"><span style={{ width: `${Math.min(100, job.progress)}%` }} /></div>
-            <small>{statusLabels[job.status]} · {formatTime(project.duration)}</small>
           </div>
 
           <div className="sidebar-section">
-            <div className="sidebar-section-heading"><span>PROJETO</span><span className="tiny-count">{project.clips.filter((clip) => clip.trackId === "V1").length}</span></div>
+            <div className="sidebar-section-heading"><span>MEDIA</span><span className="tiny-count">{project.clips.filter((clip) => clip.trackId === "V1").length}</span></div>
             <div className="project-file"><span className="file-icon audio">◒</span><div><strong>{job.originalAudioName}</strong><small>Narração principal · {formatTime(project.duration)}</small></div></div>
             <input ref={narrationInputRef} className="sidebar-upload" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm" onChange={createDraftFromEditor} />
             <button className="sidebar-action" onClick={() => narrationInputRef.current?.click()} disabled={creatingDraft}>＋ {creatingDraft ? "Enviando narração…" : "Nova narração"}</button>
           </div>
 
           <div className="sidebar-section">
-            <div className="sidebar-section-heading"><span>ATELIÊ IA</span><span className="new-pill">BETA</span></div>
+            <div className="sidebar-section-heading"><span>AI ASSIST</span><span className="new-pill">ACTIVE</span></div>
             <button className="sidebar-action" onClick={() => narrationInputRef.current?.click()} disabled={creatingDraft}><span>✦</span> {creatingDraft ? "Gerando rascunho…" : "Gerar novo rascunho"}</button>
             <button className="sidebar-action" onClick={() => setShowSources((value) => !value)}><span>⌁</span> {showSources ? "Ocultar fontes" : "Ver fontes encontradas"}</button>
           </div>
@@ -503,7 +504,7 @@ export default function EditorWorkspace() {
 
         <section className="editor-center">
           <div className="preview-toolbar">
-            <div><span className="eyebrow">PREVIEW</span><strong>{formatTime(currentTime)} <span>/ {formatTime(project.duration)}</span></strong></div>
+            <div><span className="eyebrow">PROGRAM MONITOR</span><strong>{formatTime(currentTime)} <span>/ {formatTime(project.duration)}</span></strong></div>
             <div className="preview-toolbar-actions"><span className="keyboard-hint">SPACE</span><span>reproduzir</span><button className="icon-button" onClick={() => setCurrentTime(0)} title="Voltar ao início">↶</button><button className="play-button" onClick={togglePlaying}>{playing ? "Ⅱ" : "▶"}</button></div>
           </div>
           <div className="preview-stage-wrap">
@@ -547,7 +548,7 @@ export default function EditorWorkspace() {
                       const clipStyle = { left: clip.start * zoom, width: Math.max(18, clip.duration * zoom) } as CSSProperties;
                       return <div className={`timeline-clip clip-${track.id.toLowerCase()} ${selected ? "selected" : ""}`} key={clip.id} style={clipStyle} onPointerDown={(event) => startGesture(event, clip, "move")} onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); }} title={clip.label}>
                         {selected && track.id === "V1" && <button className="trim-handle left" onPointerDown={(event) => startGesture(event, clip, "left")} aria-label="Ajustar início" />}
-                        <span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
+                        <span className="clip-role">{track.kind === "audio" ? "VOICE" : "B-ROLL"}</span><span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
                         {selected && track.id === "V1" && <button className="trim-handle right" onPointerDown={(event) => startGesture(event, clip, "right")} aria-label="Ajustar fim" />}
                       </div>;
                     })}</div>;
@@ -560,6 +561,7 @@ export default function EditorWorkspace() {
 
         <aside className="editor-sidebar inspector-sidebar">
           <div className="sidebar-heading"><span className="eyebrow">INSPECTOR</span><span className="inspector-icon">⌘</span></div>
+          <div className="inspector-mode"><span className="active">CLIP</span><span>AI NOTE</span></div>
           {!selectedClip ? <div className="inspector-empty"><span>⌁</span><strong>Selecione um trecho</strong><p>Os controles de corte, origem e duração aparecerão aqui.</p></div> : (
             <div className="inspector-content">
               <div className="inspector-title"><span className={`inspector-type type-${selectedClip.trackId.toLowerCase()}`}>{selectedClip.trackId}</span><div><strong>{selectedClip.label}</strong><small>{selectedClip.sourceTitle || "Mídia local do rascunho"}</small></div></div>
