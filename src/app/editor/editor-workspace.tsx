@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { ChangeEvent, CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import CreativeBriefForm from "@/components/creative-brief-form";
 import type { EditorClip, EditorProject, EditorTrack, JobState, JobStatus } from "@/lib/types";
 
@@ -14,6 +14,7 @@ const statusLabels: Record<JobStatus, string> = {
   awaiting_direction: "Defina a direção",
   planning: "Planejando",
   searching: "Pesquisando B-roll",
+  verifying: "Validando fontes visuais",
   downloading: "Preparando mídia",
   rendering: "Renderizando",
   awaiting_approval: "Pronto para revisar",
@@ -26,6 +27,7 @@ const processingStages: Array<{ label: string; threshold: number; statuses: JobS
   { label: "Narração", threshold: 10, statuses: ["received", "transcribing"] },
   { label: "Direção criativa", threshold: 20, statuses: ["planning"] },
   { label: "Busca e B-roll", threshold: 45, statuses: ["searching", "downloading"] },
+  { label: "Validação visual", threshold: 48, statuses: ["verifying"] },
   { label: "Preview", threshold: 86, statuses: ["rendering", "awaiting_approval", "completed"] },
 ];
 
@@ -47,87 +49,159 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
+function activeAt(clip: EditorClip, time: number) {
+  return time >= clip.start && time < clip.start + clip.duration;
+}
+
 function ProcessingScreen({
   job,
   title,
   message,
   variant = "loading",
+  onRetry,
+  retrying = false,
+  children,
 }: {
   job?: JobState | null;
   title: string;
   message: string;
   variant?: "loading" | "error";
+  onRetry?: () => void;
+  retrying?: boolean;
+  children?: ReactNode;
 }) {
   const progress = job ? clamp(Number(job.progress) || 0, 0, 100) : 0;
   const activeStage = job ? processingStages.findIndex((stage) => stage.statuses.includes(job.status)) : 0;
   const activeStageIndex = activeStage >= 0 ? activeStage : progress >= 86 ? processingStages.length - 1 : 0;
   const isError = variant === "error";
+  const isBrief = Boolean(children);
   const isComplete = job?.status === "awaiting_approval" || job?.status === "completed";
+  const statusText = job ? statusLabels[job.status] : "Preparando o editor";
+  const visibleProgress = job ? `${progress}%` : "—";
 
   return (
     <main className="editor-app editor-processing-shell">
       <header className="editor-topbar">
         <div className="editor-brand">
-          <Link href="/" className="editor-back">←</Link>
+          <Link href="/?new=1" className="editor-back" aria-label="Voltar para novo projeto" title="Novo projeto">←</Link>
           <span className="brand-mark small">✦</span>
           <div>
             <p className="eyebrow">EDITORIA · LOCAL NLE</p>
             <strong>{job?.originalAudioName || "Novo projeto"}</strong>
           </div>
         </div>
+        <div className="editor-modebar processing-modebar" aria-label="Workspace">
+          <span className={!isBrief ? "active" : ""}>EDIT</span>
+          <span className={isBrief ? "active" : ""}>AI ASSIST</span>
+          <span>DELIVER</span>
+        </div>
         <div className="editor-top-actions">
           <span className={`editor-status ${isError ? "status-failed" : "status-rendering"}`}>
-            <span className="status-dot" />{isError ? "Atenção" : "Processando"}
+            <span className="status-dot" />{isError ? "Atenção" : isBrief ? "Direção em andamento" : "Processando"}
           </span>
         </div>
       </header>
 
-      <section className="processing-frame">
-        <div className="processing-card">
-          <div className="processing-card-head">
-            <div className={`processing-mark ${isError ? "warning" : ""}`}>{isError ? "!" : "✦"}</div>
-            <div>
-              <p className="eyebrow">{isError ? "EDITORIA · ERRO" : "EDITORIA · CONSTRUINDO O RASCUNHO"}</p>
-              <h1>{title}</h1>
-              <p className="processing-message">{message}</p>
+      <div className="editor-layout editor-processing-layout">
+        <aside className="editor-sidebar left-sidebar processing-context-sidebar">
+          <div className="sidebar-heading"><span className="eyebrow">PROJECT</span><span className="ai-spark">✦</span></div>
+          <div className="ai-card processing-context-card">
+            <div className="ai-card-head"><span className="ai-card-label">AI ASSIST</span><span className="processing-live-pill">{isError ? "PAUSED" : "LIVE"}</span></div>
+            <strong>{isBrief ? "Direção criativa" : title}</strong>
+            <p>{message}</p>
+            <div className="ai-status-row"><span className={`ai-live-dot ${isError ? "error" : ""}`} /><small>{statusText}</small><b>{visibleProgress}</b></div>
+            <div className="ai-card-progress"><span style={{ width: job ? `${progress}%` : "22%" }} /></div>
+          </div>
+
+          <div className="sidebar-section">
+            <div className="sidebar-section-heading"><span>PIPELINE IA</span><span className="new-pill">{isError ? "ERRO" : "LIVE"}</span></div>
+            <div className="processing-context-stages">
+              {processingStages.map((stage, index) => {
+                const done = Boolean(job && (index < activeStageIndex || isComplete || (index === processingStages.length - 1 && progress >= 100)));
+                const current = !isError && index === activeStageIndex && !done;
+                return <div className={`processing-context-stage ${done ? "done" : ""} ${current ? "current" : ""}`} key={stage.label}><span>{done ? "✓" : index + 1}</span><small>{stage.label}</small></div>;
+              })}
             </div>
           </div>
 
-          <div className="processing-progress-head">
-            <span>{isError ? "Processamento interrompido" : "Progresso do projeto"}</span>
-            <strong>{isError ? "—" : job ? `${progress}%` : "Conectando…"}</strong>
-          </div>
-          <div className={`processing-progress-track ${isError ? "error" : ""}`}>
-            {isError ? <span style={{ width: "100%" }} /> : job ? <span style={{ width: `${progress}%` }} /> : <span className="indeterminate" />}
+          <div className="sidebar-section processing-context-note">
+            <div className="sidebar-section-heading"><span>EDITOR</span><span className="tiny-count">LIVE</span></div>
+            <p>{isBrief ? "As perguntas ficam aqui dentro. A busca só começa depois que você confirmar suas escolhas." : "O monitor, as camadas e o progresso continuam visíveis enquanto a IA trabalha."}</p>
           </div>
 
-          <div className="processing-status-line">
-            <span><i className={isError ? "error" : ""} />{job ? statusLabels[job.status] : "Sincronizando o job"}</span>
-            <span>{isError ? "Revise a mensagem acima" : "Atualização automática a cada poucos segundos"}</span>
-          </div>
+          <div className="sidebar-footnote"><span className="pulse" /> GPT-5.6 Luna Max · Codex CLI<br /><small>Fluxo integrado ao editor local</small></div>
+        </aside>
 
-          <div className="processing-stages">
-            {processingStages.map((stage, index) => {
-              const done = Boolean(job && (index < activeStageIndex || isComplete || (index === processingStages.length - 1 && progress >= 100)));
-              const current = !isError && index === activeStageIndex && !done;
-              return <div className={`processing-stage ${done ? "done" : ""} ${current ? "current" : ""}`} key={stage.label}><span>{done ? "✓" : index + 1}</span><div><strong>{stage.label}</strong><small>{done ? "Concluído" : current ? "Em andamento" : "A seguir"}</small></div></div>;
-            })}
-          </div>
+        <section className="editor-center processing-editor-center">
+          {isBrief ? (
+            <>
+              <div className="preview-toolbar">
+                <div><span className="eyebrow">AI ASSIST · DIREÇÃO CRIATIVA</span><strong>Perguntas estratégicas <span>antes da busca</span></strong></div>
+                <div className="preview-toolbar-actions"><span className="keyboard-hint">IN EDITOR</span><span>sem trocar de tela</span></div>
+              </div>
+              <div className="processing-brief-content">{children}</div>
+            </>
+          ) : (
+            <>
+              <div className="preview-toolbar">
+                <div><span className="eyebrow">PROGRAM MONITOR</span><strong>Editor em preparação <span>{visibleProgress}</span></strong></div>
+                <div className="preview-toolbar-actions"><span className="keyboard-hint">AI</span><span>{statusText}</span></div>
+              </div>
+              <div className="preview-stage-wrap processing-preview-wrap">
+                <div className="preview-stage processing-preview-stage">
+                  <div className="processing-preview-message">
+                    <div className={`processing-mark ${isError ? "warning" : ""}`}>{isError ? "!" : "✦"}</div>
+                    <p className="eyebrow">EDITORIA · {isError ? "ATENÇÃO" : "PROCESSANDO DENTRO DO EDITOR"}</p>
+                    <h1>{title}</h1>
+                    <p>{message}</p>
+                  </div>
+                  <div className="preview-vignette" />
+                  <div className="preview-meta"><span>PROGRAM MONITOR</span><span>{statusText}</span></div>
+                </div>
+              </div>
+              <div className="timeline-panel processing-timeline-panel">
+                <div className="timeline-heading"><div><span className="eyebrow">TIMELINE</span><strong>Camadas prontas quando o processamento terminar</strong></div><span className="processing-timeline-badge">{visibleProgress}</span></div>
+                <div className="processing-timeline-body">
+                  <div className="processing-ruler-skeleton"><i /><i /><i /><i /></div>
+                  <div className="processing-track-skeleton"><span>V2 · AI VIDEO</span><i /><i /></div>
+                  <div className="processing-track-skeleton"><span>V1 · BASE</span><i /></div>
+                  <div className="processing-track-skeleton audio"><span>A1 · VOICE</span><i /></div>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
 
-          <div className="processing-editor-skeleton" aria-hidden="true">
-            <div className="processing-skeleton-monitor"><span>PROGRAM MONITOR</span><i>⌁</i></div>
-            <div className="processing-skeleton-timeline"><span>TIMELINE</span><i /><i /><i /></div>
+        <aside className="editor-sidebar inspector-sidebar processing-inspector-sidebar">
+          <div className="sidebar-heading"><span className="eyebrow">AI ASSIST</span><span className="inspector-icon">{isError ? "!" : "✦"}</span></div>
+          <div className="processing-card processing-card-inline">
+            <div className="processing-card-head">
+              <div className={`processing-mark ${isError ? "warning" : ""}`}>{isError ? "!" : "✦"}</div>
+              <div><p className="eyebrow">{isError ? "PROCESSAMENTO INTERROMPIDO" : isBrief ? "DIREÇÃO DENTRO DO EDITOR" : "CONSTRUINDO O RASCUNHO"}</p><h1>{title}</h1><p className="processing-message">{message}</p></div>
+            </div>
+            <div className="processing-progress-head"><span>{isError ? "Status" : "Progresso"}</span><strong>{isError ? "—" : visibleProgress}</strong></div>
+            <div className={`processing-progress-track ${isError ? "error" : ""}`}>
+              {isError ? <span style={{ width: "100%" }} /> : job ? <span style={{ width: `${progress}%` }} /> : <span className="indeterminate" />}
+            </div>
+            <div className="processing-status-line"><span><i className={isError ? "error" : ""} />{statusText}</span><span>{isError ? "Revise a mensagem" : "Atualização automática"}</span></div>
+            <div className="processing-stages">
+              {processingStages.map((stage, index) => {
+                const done = Boolean(job && (index < activeStageIndex || isComplete || (index === processingStages.length - 1 && progress >= 100)));
+                const current = !isError && index === activeStageIndex && !done;
+                return <div className={`processing-stage ${done ? "done" : ""} ${current ? "current" : ""}`} key={stage.label}><span>{done ? "✓" : index + 1}</span><div><strong>{stage.label}</strong><small>{done ? "Concluído" : current ? "Em andamento" : "A seguir"}</small></div></div>;
+              })}
+            </div>
+            {isError ? (
+              <div className="processing-error-actions">
+                {onRetry && <button className="processing-retry-button" type="button" onClick={onRetry} disabled={retrying}>{retrying ? "Retomando…" : "Tentar novamente"}</button>}
+                <Link className="processing-back-link" href="/?new=1">Voltar para novo projeto</Link>
+              </div>
+            ) : <p className="processing-footnote">Você pode continuar nesta tela. Assim que a timeline estiver pronta, o monitor e as camadas serão atualizados aqui.</p>}
           </div>
-          <p className="processing-footnote">Você pode deixar esta janela aberta. Assim que a timeline estiver pronta, o editor será aberto automaticamente.</p>
-          {isError && <Link className="processing-back-link" href="/">Voltar para o início</Link>}
-        </div>
-      </section>
+        </aside>
+      </div>
     </main>
   );
-}
-
-function activeAt(clip: EditorClip, time: number) {
-  return time >= clip.start && time < clip.start + clip.duration;
 }
 
 type GestureMode = "move" | "left" | "right";
@@ -145,7 +219,7 @@ function transformClip(project: EditorProject, clipId: string, mode: GestureMode
   return {
     ...project,
     clips: project.clips.map((clip) => {
-      if (clip.id !== clipId || clip.trackId !== "V1") return clip;
+      if (clip.id !== clipId || clip.trackId !== "V2" || clip.role === "base") return clip;
       if (mode === "move") {
         return { ...clip, start: clamp(clip.start + delta, 0, Math.max(0, project.duration - clip.duration)) };
       }
@@ -182,11 +256,14 @@ export default function EditorWorkspace() {
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [showRecorder, setShowRecorder] = useState(false);
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
   const [recordedAudioUrl, setRecordedAudioUrl] = useState("");
+  const [newAudio, setNewAudio] = useState<File | null>(null);
+  const [newBrief, setNewBrief] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [showSources, setShowSources] = useState(false);
@@ -199,6 +276,7 @@ export default function EditorWorkspace() {
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recorderChunksRef = useRef<Blob[]>([]);
   const recorderTimerRef = useRef<number | null>(null);
+  const newAudioInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -208,9 +286,30 @@ export default function EditorWorkspace() {
         setResolvingJob(false);
         return;
       }
-      void fetch("/api/jobs?latest=1", { cache: "no-store" })
-        .then(async (response) => (response.ok ? (await response.json()) as JobState : null))
-        .then((latest) => setJobId(latest?.id || null))
+      if (new URLSearchParams(window.location.search).get("new") === "1") {
+        setJobId(null);
+        setResolvingJob(false);
+        return;
+      }
+      void fetch("/api/jobs", { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) return [] as JobState[];
+          const data = (await response.json()) as { jobs?: JobState[] };
+          return data.jobs || [];
+        })
+        .then((jobs) => {
+          const resumable = jobs.find((candidate) => Boolean(candidate.editorProject && candidate.baseCoverage) || [
+            "received",
+            "transcribing",
+            "awaiting_direction",
+            "planning",
+            "searching",
+            "verifying",
+            "downloading",
+            "rendering",
+          ].includes(candidate.status));
+          setJobId(resumable?.id || null);
+        })
         .catch(() => setJobId(null))
         .finally(() => setResolvingJob(false));
     }, 0);
@@ -229,18 +328,53 @@ export default function EditorWorkspace() {
 
   const loadProject = useCallback(async (id: string) => {
     setError("");
-    const [jobResponse, projectResponse] = await Promise.all([
-      fetch(`/api/jobs/${id}`, { cache: "no-store" }),
-      fetch(`/api/jobs/${id}/editor`, { cache: "no-store" }),
-    ]);
+    const jobResponse = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
     const jobData = (await jobResponse.json()) as JobState & { error?: string };
-    const projectData = (await projectResponse.json()) as EditorProject & { error?: string };
     if (!jobResponse.ok) throw new Error(jobData.error || "Job não encontrado.");
-    if (!projectResponse.ok) throw new Error(projectData.error || "Projeto do editor não encontrado.");
+    setJob(jobData);
+    setProject(null);
+    setCurrentTime(0);
+    const pipelineStatuses: JobStatus[] = [
+      "received",
+      "transcribing",
+      "planning",
+      "searching",
+      "verifying",
+      "downloading",
+      "rendering",
+    ];
+    if (jobData.status === "awaiting_direction" || (!jobData.editorProject && pipelineStatuses.includes(jobData.status))) return;
+    const projectResponse = await fetch(`/api/jobs/${id}/editor`, { cache: "no-store" });
+    const projectData = (await projectResponse.json()) as EditorProject & { error?: string };
+    if (!projectResponse.ok) {
+      if (pipelineStatuses.includes(jobData.status)) return;
+      throw new Error(projectData.error || "Projeto do editor não encontrado.");
+    }
     setJob(jobData);
     setProject(projectData);
     setCurrentTime(0);
   }, []);
+
+  async function retryJob() {
+    if (!jobId) return;
+    setRetrying(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      const data = (await response.json()) as JobState & { error?: string };
+      if (!response.ok) {
+        setError(data.error || "Não foi possível retomar o job.");
+        return;
+      }
+      setJob(data);
+      setProject(null);
+      setCurrentTime(0);
+    } catch {
+      setError("Não foi possível retomar o job.");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   useEffect(() => {
     if (!jobId) return;
@@ -301,18 +435,22 @@ export default function EditorWorkspace() {
     [project, currentTime],
   );
   const activeSourceVideoClips = useMemo(
-    () => activeVideoClips.filter((clip) => Boolean(clip.sourceUrl)),
+    () => activeVideoClips.filter((clip) => Boolean(clip.assetFileName)),
     [activeVideoClips],
   );
-  const activeMissingSourceClips = useMemo(
-    () => activeVideoClips.filter((clip) => !clip.sourceUrl),
-    [activeVideoClips],
+  const activeBaseVideoClip = useMemo(
+    () => activeSourceVideoClips.find((clip) => clip.role === "base" || clip.unitId === "base") || null,
+    [activeSourceVideoClips],
+  );
+  const activeOverlayVideoClips = useMemo(
+    () => activeSourceVideoClips.filter((clip) => clip.role !== "base" && clip.unitId !== "base"),
+    [activeSourceVideoClips],
   );
   const timelineWidth = project ? Math.max(920, project.duration * zoom) : 920;
   const tickStep = project && project.duration > 180 ? 20 : project && project.duration > 90 ? 10 : 5;
   const ticks = project ? Array.from({ length: Math.ceil(project.duration / tickStep) + 1 }, (_, index) => Math.min(index * tickStep, project.duration)) : [];
   const audioClip = project?.clips.find((clip) => clip.trackId === "A1");
-  const missingSourceCount = project?.clips.filter((clip) => clip.trackId === "V1" && !clip.sourceUrl).length || 0;
+  const missingSourceCount = project?.clips.filter((clip) => clip.role === "contextual" && !clip.assetFileName).length || 0;
 
   const saveProject = useCallback(async (nextProject: EditorProject) => {
     if (!jobId) return;
@@ -418,7 +556,7 @@ export default function EditorWorkspace() {
   }
 
   function startGesture(event: ReactPointerEvent<HTMLElement>, clip: EditorClip, mode: GestureMode) {
-    if (!project || clip.trackId !== "V1" || project.tracks.find((track) => track.id === clip.trackId)?.locked) return;
+    if (!project || clip.trackId !== "V2" || clip.role === "base" || project.tracks.find((track) => track.id === clip.trackId)?.locked) return;
     event.preventDefault();
     event.stopPropagation();
     setSelectedClipId(clip.id);
@@ -445,7 +583,7 @@ export default function EditorWorkspace() {
   }
 
   function splitSelected() {
-    if (!project || !selectedClip || selectedClip.trackId !== "V1") return;
+    if (!project || !selectedClip || selectedClip.trackId !== "V2" || selectedClip.role === "base") return;
     const cut = currentTime;
     if (cut <= selectedClip.start + MIN_CLIP_DURATION || cut >= selectedClip.start + selectedClip.duration - MIN_CLIP_DURATION) {
       setNotice("Coloque o playhead dentro de um clipe para dividi-lo.");
@@ -472,14 +610,14 @@ export default function EditorWorkspace() {
   }
 
   function deleteSelected() {
-    if (!project || !selectedClip || selectedClip.trackId === "A1") return;
+    if (!project || !selectedClip || selectedClip.trackId === "A1" || selectedClip.role === "base") return;
     mutateProject((current) => ({ ...current, clips: current.clips.filter((clip) => clip.id !== selectedClip.id) }));
     setSelectedClipId(null);
     setNotice("Trecho removido da timeline.");
   }
 
   function updateSelectedField(field: "start" | "duration", value: number) {
-    if (!selectedClip || !Number.isFinite(value) || selectedClip.trackId !== "V1") return;
+    if (!selectedClip || !Number.isFinite(value) || selectedClip.trackId !== "V2" || selectedClip.role === "base") return;
     mutateProject((current) => ({
       ...current,
       clips: current.clips.map((clip) => {
@@ -610,12 +748,12 @@ export default function EditorWorkspace() {
     setNotice("Exportação iniciada. Você pode continuar revisando a timeline.");
   }
 
-  async function submitNarrationAudio(audio: File) {
+  async function submitNarrationAudio(audio: File, brief = job?.brief || "") {
     setCreatingDraft(true);
     setNotice("Enviando a nova narração para o pipeline…");
     const formData = new FormData();
     formData.set("audio", audio);
-    formData.set("brief", job?.brief || "");
+    formData.set("brief", brief);
     try {
       const response = await fetch("/api/jobs", { method: "POST", body: formData });
       const data = (await response.json()) as JobState & { error?: string };
@@ -623,7 +761,18 @@ export default function EditorWorkspace() {
         setNotice(data.error || "Não foi possível criar o novo rascunho.");
         return;
       }
-      window.location.assign(`/editor?job=${data.id}`);
+      setJobId(data.id);
+      setJob(data);
+      setProject(null);
+      setSelectedClipId(null);
+      setCurrentTime(0);
+      setPlaying(false);
+      setHistory([]);
+      setFuture([]);
+      setDirty(false);
+      setError("");
+      setResolvingJob(false);
+      window.history.replaceState(null, "", `/?job=${data.id}`);
     } catch {
       setNotice("Não foi possível enviar a nova narração.");
     } finally {
@@ -635,6 +784,71 @@ export default function EditorWorkspace() {
     const audio = event.target.files?.[0];
     event.target.value = "";
     if (audio) void submitNarrationAudio(audio);
+  }
+
+  function chooseNewAudio(event: ChangeEvent<HTMLInputElement>) {
+    setNewAudio(event.target.files?.[0] || null);
+  }
+
+  function submitNewProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newAudio) {
+      setNotice("Escolha uma narraÃ§Ã£o antes de iniciar o projeto.");
+      return;
+    }
+    void submitNarrationAudio(newAudio, newBrief);
+  }
+
+  if (!jobId && !resolvingJob) {
+    return (
+      <main className="editor-app editor-new-project">
+        <header className="editor-topbar">
+          <div className="editor-brand">
+            <span className="brand-mark small">âœ¦</span>
+            <div>
+              <p className="eyebrow">EDITORIA Â· LOCAL NLE</p>
+              <strong>Novo projeto</strong>
+            </div>
+          </div>
+          <div className="editor-top-actions">
+            <span className="editor-status"><span className="status-dot" />Pronto</span>
+          </div>
+        </header>
+        <section className="new-project-frame">
+          <div className="new-project-card">
+            <div className="new-project-heading">
+              <div className="processing-mark">âœ¦</div>
+              <div>
+                <p className="eyebrow accent">EDITORIA Â· NOVA TIMELINE</p>
+                <h1>Comece pela narraÃ§Ã£o</h1>
+                <p>Envie sua voz e o editor prepara a transcriÃ§Ã£o, a direÃ§Ã£o visual e as camadas da timeline.</p>
+              </div>
+            </div>
+            <form className="new-project-form" onSubmit={submitNewProject}>
+              <label className={`new-project-dropzone ${newAudio ? "has-file" : ""}`}>
+                <input ref={newAudioInputRef} type="file" accept="audio/*,.m4a,.mp3,.wav,.webm" onChange={chooseNewAudio} />
+                <span className="new-project-upload-icon">â†¥</span>
+                <strong>{newAudio ? newAudio.name : "Escolha ou solte a narraÃ§Ã£o"}</strong>
+                <small>{newAudio ? `${(newAudio.size / 1024 / 1024).toFixed(1)} MB Â· pronta para analisar` : "MP3, WAV, M4A ou WEBM"}</small>
+              </label>
+              <label className="new-project-label" htmlFor="new-project-brief">Contexto opcional</label>
+              <textarea
+                id="new-project-brief"
+                value={newBrief}
+                onChange={(event) => setNewBrief(event.target.value)}
+                placeholder="Ex.: ensaio sobre Deltarune. Priorize gameplay bruta e cenas diretamente relacionadas Ã  fala."
+                rows={4}
+              />
+              <button className="primary-small new-project-submit" type="submit" disabled={creatingDraft || !newAudio}>
+                {creatingDraft ? "Enviando narraÃ§Ã£oâ€¦" : "Criar timeline com IA"}<span>â†’</span>
+              </button>
+            </form>
+            <div className="new-project-footer"><span className="pulse" /> GPT-5.6 Luna Max Â· Codex CLI Â· gameplay-base obrigatÃ³ria</div>
+          </div>
+        </section>
+        {notice && <button className="editor-toast" onClick={() => setNotice("")}>{notice}<span>Ã—</span></button>}
+      </main>
+    );
   }
 
   if (!jobId && resolvingJob) {
@@ -649,36 +863,32 @@ export default function EditorWorkspace() {
     return <ProcessingScreen title="Não foi possível abrir o editor" message={error} variant="error" />;
   }
 
-  if (!job || !project) {
+  if (!job || (!project && job.status !== "awaiting_direction")) {
+    if (job?.status === "failed") {
+      return <ProcessingScreen job={job} title="O job falhou" message={job.error || job.message} variant="error" onRetry={retryJob} retrying={retrying} />;
+    }
     return <ProcessingScreen job={job} title="Preparando a sala de edição" message={job?.message || "Carregando timeline, narração e camadas."} />;
   }
 
   if (job.status === "awaiting_direction" && job.creativeBrief) {
     return (
-      <main className="editor-app creative-brief-app">
-        <header className="editor-topbar">
-          <div className="editor-brand">
-            <Link href="/" className="editor-back">←</Link>
-            <span className="brand-mark small">✦</span>
-            <div>
-              <p className="eyebrow">EDITORIA · DIREÇÃO CRIATIVA</p>
-              <strong>{job.originalAudioName}</strong>
-            </div>
-          </div>
-          <div className="editor-top-actions">
-            <span className={`editor-status status-${job.status}`}><span className="status-dot" />{statusLabels[job.status]}</span>
-          </div>
-        </header>
-        <div className="creative-brief-page">
-          <CreativeBriefForm job={job} onSubmitted={setJob} />
-        </div>
-      </main>
+      <ProcessingScreen
+        job={job}
+        title="Defina a direção criativa"
+        message="As respostas ficam dentro do editor e orientam a busca de vídeos diretamente relacionados à narração."
+      >
+        <CreativeBriefForm job={job} compact onSubmitted={setJob} />
+      </ProcessingScreen>
     );
+  }
+
+  if (!project) {
+    return <ProcessingScreen job={job} title="Preparando a sala de ediÃ§Ã£o" message={job?.message || "Carregando timeline, narraÃ§Ã£o e camadas."} />;
   }
 
   const isBuildingDraft = Boolean(
     !job.timeline
-    && ["received", "transcribing", "planning", "searching", "downloading", "rendering"].includes(job.status),
+    && ["received", "transcribing", "planning", "searching", "verifying", "downloading", "rendering"].includes(job.status),
   );
   if (isBuildingDraft) {
     return <ProcessingScreen job={job} title="Montando o primeiro corte" message={job.message || "A IA está pesquisando e preparando a timeline."} />;
@@ -691,7 +901,7 @@ export default function EditorWorkspace() {
     <main className="editor-app">
       <header className="editor-topbar">
         <div className="editor-brand">
-          <Link href="/" className="editor-back">←</Link>
+          <Link href="/?new=1" className="editor-back" aria-label="Voltar para novo projeto" title="Novo projeto">←</Link>
           <span className="brand-mark small">✦</span>
           <div>
             <p className="eyebrow">EDITORIA · LOCAL NLE</p>
@@ -717,13 +927,13 @@ export default function EditorWorkspace() {
             <div className="ai-card-head"><span className="ai-card-label">AI ASSIST</span><kbd>⌘K</kbd></div>
             <strong>Rascunho em edição</strong>
             <p>A inteligência artificial organizou o primeiro corte a partir da narração.</p>
-            {missingSourceCount > 0 && <p className="ai-warning">{missingSourceCount} trecho(s) de B-roll estão offline e aparecem marcados na timeline.</p>}
+            {missingSourceCount > 0 && <p className="ai-warning">{missingSourceCount} overlay(s) não têm fonte local; a gameplay-base continua cobrindo esses intervalos.</p>}
             <div className="ai-status-row"><span className="ai-live-dot" /><small>{statusLabels[job.status]}</small><b>{formatTime(project.duration)}</b></div>
             <div className="ai-card-progress"><span style={{ width: `${Math.min(100, job.progress)}%` }} /></div>
           </div>
 
           <div className="sidebar-section">
-            <div className="sidebar-section-heading"><span>MEDIA</span><span className="tiny-count">{project.clips.filter((clip) => clip.trackId === "V1").length}</span></div>
+            <div className="sidebar-section-heading"><span>MEDIA</span><span className="tiny-count">{project.clips.filter((clip) => clip.assetType === "video").length}</span></div>
             <div className="project-file"><span className="file-icon audio">◒</span><div><strong>{job.originalAudioName}</strong><small>Narração principal · {formatTime(project.duration)}</small></div></div>
             <input ref={narrationInputRef} className="sidebar-upload" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm" onChange={createDraftFromEditor} />
             <button className="sidebar-action" onClick={() => narrationInputRef.current?.click()} disabled={creatingDraft}>＋ {creatingDraft ? "Enviando narração…" : "Nova narração"}</button>
@@ -768,7 +978,7 @@ export default function EditorWorkspace() {
             </div>
           )}
 
-          <div className="sidebar-footnote"><span className="pulse" /> Gemini 3.6 Flash<br /><small>Projeto salvo localmente</small></div>
+          <div className="sidebar-footnote"><span className="pulse" /> GPT-5.6 Luna Max · Codex CLI<br /><small>Gameplay-base obrigatória · projeto local</small></div>
         </aside>
 
         <section className="editor-center">
@@ -778,19 +988,34 @@ export default function EditorWorkspace() {
           </div>
           <div className="preview-stage-wrap">
             <div className="preview-stage">
-              {activeSourceVideoClips.length > 0 ? activeSourceVideoClips.map((clip) => (
-                <video
-                  key={clip.id}
-                  ref={(element) => { if (element) videoRefs.current[clip.id] = element; else delete videoRefs.current[clip.id]; }}
-                  className="preview-video"
-                  src={jobId ? mediaUrl(jobId, clip.assetFileName) : ""}
-                  muted
-                  playsInline
-                  preload="auto"
-                />
-              )) : activeMissingSourceClips.length > 0 ? <div className="preview-placeholder missing-source"><span>!</span><p>Fonte de vídeo indisponível neste trecho.</p><small>Revise as buscas ou substitua o B-roll no inspector.</small></div> : previewFallback ? <video className="preview-video preview-fallback" src={previewFallback} muted playsInline /> : <div className="preview-placeholder"><span>✦</span><p>Selecione um trecho para começar.</p></div>}
+              {activeBaseVideoClip ? (
+                <>
+                  <video
+                    key={activeBaseVideoClip.id}
+                    ref={(element) => { if (element) videoRefs.current[activeBaseVideoClip.id] = element; else delete videoRefs.current[activeBaseVideoClip.id]; }}
+                    className="preview-video preview-base"
+                    style={{ zIndex: 0 }}
+                    src={jobId ? mediaUrl(jobId, activeBaseVideoClip.assetFileName) : ""}
+                    muted
+                    playsInline
+                    preload="auto"
+                  />
+                  {activeOverlayVideoClips.map((clip) => (
+                    <video
+                      key={clip.id}
+                      ref={(element) => { if (element) videoRefs.current[clip.id] = element; else delete videoRefs.current[clip.id]; }}
+                      className="preview-video preview-overlay"
+                      style={{ zIndex: 1 }}
+                      src={jobId ? mediaUrl(jobId, clip.assetFileName) : ""}
+                      muted
+                      playsInline
+                      preload="auto"
+                    />
+                  ))}
+                </>
+              ) : previewFallback ? <video className="preview-video preview-fallback" src={previewFallback} muted playsInline /> : <div className="preview-placeholder missing-source"><span>!</span><p>Gameplay-base indisponível.</p><small>O job precisa ser reconstruído antes de renderizar.</small></div>}
               <div className="preview-vignette" />
-              <div className="preview-meta"><span>16:9</span><span>{activeSourceVideoClips[0]?.label || activeMissingSourceClips[0]?.label || "V1 · sem sinal"}</span></div>
+              <div className="preview-meta"><span>16:9</span><span>{activeOverlayVideoClips[0]?.label || activeBaseVideoClip?.label || "V1 · sem sinal"}</span></div>
             </div>
           </div>
           {audioClip?.assetFileName && jobId && <audio ref={audioRef} src={mediaUrl(jobId, audioClip.assetFileName)} preload="auto" />}
@@ -814,12 +1039,13 @@ export default function EditorWorkspace() {
                     const clips = project.clips.filter((clip) => clip.trackId === track.id);
                     return <div className={`track-lane track-lane-${track.id.toLowerCase()}`} key={track.id}>{clips.map((clip) => {
                       const selected = clip.id === selectedClipId;
-                      const missingSource = track.id === "V1" && !clip.sourceUrl;
+                      const baseClip = clip.role === "base" || clip.unitId === "base";
+                      const missingSource = clip.role === "contextual" && !clip.sourceUrl;
                       const clipStyle = { left: clip.start * zoom, width: Math.max(18, clip.duration * zoom) } as CSSProperties;
-                      return <div className={`timeline-clip clip-${track.id.toLowerCase()} ${selected ? "selected" : ""} ${missingSource ? "missing-source" : ""}`} key={clip.id} style={clipStyle} onPointerDown={(event) => startGesture(event, clip, "move")} onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); }} title={missingSource ? `${clip.label} — fonte indisponível` : clip.label}>
-                        {selected && track.id === "V1" && <button className="trim-handle left" onPointerDown={(event) => startGesture(event, clip, "left")} aria-label="Ajustar início" />}
-                        <span className="clip-role">{track.kind === "audio" ? "VOICE" : missingSource ? "B-ROLL · OFFLINE" : "B-ROLL"}</span><span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
-                        {selected && track.id === "V1" && <button className="trim-handle right" onPointerDown={(event) => startGesture(event, clip, "right")} aria-label="Ajustar fim" />}
+                      return <div className={`timeline-clip clip-${track.id.toLowerCase()} ${selected ? "selected" : ""} ${missingSource ? "missing-source" : ""} ${baseClip ? "base-coverage" : ""}`} key={clip.id} style={clipStyle} onPointerDown={(event) => startGesture(event, clip, "move")} onClick={(event) => { event.stopPropagation(); setSelectedClipId(clip.id); }} title={missingSource ? `${clip.label} — a gameplay-base permanece visível` : baseClip ? `${clip.label} — cobre toda a duração` : clip.label}>
+                        {selected && track.id === "V2" && !baseClip && <button className="trim-handle left" onPointerDown={(event) => startGesture(event, clip, "left")} aria-label="Ajustar início" />}
+                        <span className="clip-role">{track.kind === "audio" ? "VOICE" : baseClip ? "BASE · CONTÍNUA" : missingSource ? "OVERLAY · BASE" : "OVERLAY · APROVADO"}</span><span className="clip-wave">{track.kind === "audio" ? "▂▃▅▃▂▅▃▂" : ""}</span><strong>{clip.unitId || clip.label}</strong><small>{formatTime(clip.duration)}</small>
+                        {selected && track.id === "V2" && !baseClip && <button className="trim-handle right" onPointerDown={(event) => startGesture(event, clip, "right")} aria-label="Ajustar fim" />}
                       </div>;
                     })}</div>;
                   })}
@@ -835,13 +1061,14 @@ export default function EditorWorkspace() {
           {!selectedClip ? <div className="inspector-empty"><span>⌁</span><strong>Selecione um trecho</strong><p>Os controles de corte, origem e duração aparecerão aqui.</p></div> : (
             <div className="inspector-content">
               <div className="inspector-title"><span className={`inspector-type type-${selectedClip.trackId.toLowerCase()}`}>{selectedClip.trackId}</span><div><strong>{selectedClip.label}</strong><small>{selectedClip.sourceTitle || "Mídia local do rascunho"}</small></div></div>
-              <div className="inspector-fields"><label>INÍCIO<input type="number" min="0" step="0.1" value={selectedClip.start.toFixed(1)} onChange={(event) => updateSelectedField("start", Number(event.target.value))} /></label><label>DURAÇÃO<input type="number" min={MIN_CLIP_DURATION} step="0.1" value={selectedClip.duration.toFixed(1)} onChange={(event) => updateSelectedField("duration", Number(event.target.value))} /></label></div>
+              <div className="inspector-fields"><label>INÍCIO<input disabled={selectedClip.role === "base"} type="number" min="0" step="0.1" value={selectedClip.start.toFixed(1)} onChange={(event) => updateSelectedField("start", Number(event.target.value))} /></label><label>DURAÇÃO<input disabled={selectedClip.role === "base"} type="number" min={MIN_CLIP_DURATION} step="0.1" value={selectedClip.duration.toFixed(1)} onChange={(event) => updateSelectedField("duration", Number(event.target.value))} /></label></div>
               <div className="inspector-divider" />
               <div className="inspector-block"><span className="eyebrow">INTENÇÃO VISUAL</span><p>{selectedUnit?.visualBrief || "Trecho de apoio neutro da timeline."}</p>{selectedUnit && <div className="confidence-row"><span>Confiança da IA</span><strong>{Math.round(selectedUnit.confidence * 100)}%</strong></div>}</div>
               <div className="inspector-block"><span className="eyebrow">NARRAÇÃO</span><p className="narration-quote">{selectedUnit?.narration || "Este trecho cobre uma transição da narração."}</p></div>
-              {selectedClip.trackId === "V1" && !selectedClip.sourceUrl && <div className="source-warning"><strong>Fonte indisponível</strong><p>O download deste B-roll não foi concluído. O trecho está marcado como placeholder e não será tratado como vídeo real.</p></div>}
+              {selectedClip.role === "base" && <div className="source-note"><strong>Gameplay-base contínua</strong><p>Esta camada cobre toda a duração e permanece bloqueada para impedir lacunas no vídeo.</p></div>}
+              {selectedClip.role === "contextual" && !selectedClip.sourceUrl && <div className="source-note"><strong>Gameplay-base mantida</strong><p>Este overlay não possui uma fonte local aprovada; a camada-base continua visível neste intervalo.</p></div>}
               {selectedClip.sourceUrl && <a className="source-link" href={selectedClip.sourceUrl} target="_blank" rel="noreferrer">Abrir fonte original ↗</a>}
-              <div className="inspector-actions"><button onClick={splitSelected}>✂ Dividir no playhead</button><button className="danger-action" onClick={deleteSelected}>Excluir trecho</button></div>
+              <div className="inspector-actions"><button onClick={splitSelected} disabled={selectedClip.role === "base"}>✂ Dividir no playhead</button><button className="danger-action" onClick={deleteSelected} disabled={selectedClip.role === "base"}>Excluir trecho</button></div>
             </div>
           )}
           <div className="inspector-bottom"><span className="eyebrow">ATALHOS</span><div><span><kbd>Space</kbd> reproduzir</span><span><kbd>Click</kbd> selecionar</span><span><kbd>Drag</kbd> mover ou aparar</span></div></div>

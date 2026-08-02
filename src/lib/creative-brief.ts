@@ -180,7 +180,9 @@ function cleanQuestion(raw: unknown, fallback?: CreativeQuestion): CreativeQuest
     options: kind === "text" ? undefined : (options.length > 0 ? options : fallback?.options || []),
     placeholder: String(value.placeholder || fallback?.placeholder || "").trim() || undefined,
     required: typeof value.required === "boolean" ? value.required : fallback?.required,
-    maxSelections: typeof value.maxSelections === "number" ? value.maxSelections : fallback?.maxSelections,
+    maxSelections: typeof value.maxSelections === "number" && value.maxSelections > 0
+      ? value.maxSelections
+      : fallback?.maxSelections,
   };
 }
 

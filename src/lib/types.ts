@@ -4,6 +4,7 @@ export type JobStatus =
   | "awaiting_direction"
   | "planning"
   | "searching"
+  | "verifying"
   | "downloading"
   | "rendering"
   | "awaiting_approval"
@@ -38,9 +39,33 @@ export interface VisualUnit {
   end: number;
   narration: string;
   visualBrief: string;
+  subject?: string;
+  action?: string;
+  location?: string;
   queries: string[];
   mustShow: string[];
+  mustAvoid?: string[];
   confidence: number;
+}
+
+export interface VisualPlan {
+  baseQuery: string;
+  baseMustShow: string[];
+  units: VisualUnit[];
+}
+
+export type CandidateSourceKind = "raw_gameplay" | "cutscene" | "official_footage" | "edited_creator" | "unknown";
+
+export interface CandidateVerification {
+  status: "approved" | "rejected";
+  directMatchScore: number;
+  rawFootage: boolean;
+  editedCreatorRisk: boolean;
+  blackFrameRisk: boolean;
+  sourceKind: CandidateSourceKind;
+  evidence: string[];
+  rejectionReason?: string;
+  checkedAt: string;
 }
 
 export interface YouTubeCandidate {
@@ -52,12 +77,16 @@ export interface YouTubeCandidate {
   channelTitle: string;
   publishedAt: string;
   url: string;
+  duration?: number;
+  sourceKind?: CandidateSourceKind;
   thumbnailUrl?: string;
+  verification?: CandidateVerification;
 }
 
 export interface PlannedClip {
   unitId: string;
   candidateId: string | null;
+  candidateIds: string[];
   sourceStart: number;
   duration: number;
   confidence: number;
@@ -67,7 +96,19 @@ export interface PlannedClip {
 export interface EditPlan {
   title: string;
   visualStyle: string;
+  baseQuery: string;
+  baseCandidateIds: string[];
   clips: PlannedClip[];
+}
+
+export interface BaseCoverage {
+  fileName: string;
+  duration: number;
+  sourceStart?: number;
+  candidateId: string;
+  sourceUrl: string;
+  sourceTitle: string;
+  coverage: "source";
 }
 
 export type CreativeQuestionKind = "single" | "multi" | "text";
@@ -96,12 +137,25 @@ export interface CreativeBrief {
   submittedAt?: string;
 }
 
+export interface AiRuntimeInfo {
+  provider: "codex-cli";
+  model: string;
+  reasoningEffort: string;
+  label: string;
+}
+
 export interface TimelineSegment {
   unitId: string;
   fileName: string;
   duration: number;
   sourceUrl?: string;
   sourceTitle?: string;
+  coverage: "source";
+  candidateId?: string;
+}
+
+export function isGapUnitId(unitId: string | undefined | null) {
+  return Boolean(unitId?.startsWith("gap-"));
 }
 
 export type EditorTrackKind = "video" | "audio";
@@ -114,9 +168,12 @@ export interface EditorTrack {
   locked: boolean;
 }
 
+export type EditorClipRole = "base" | "contextual" | "audio";
+
 export interface EditorClip {
   id: string;
   trackId: EditorTrack["id"];
+  role?: EditorClipRole;
   unitId?: string;
   assetType: EditorTrackKind;
   assetFileName?: string;
@@ -127,10 +184,11 @@ export interface EditorClip {
   sourceDuration: number;
   sourceUrl?: string;
   sourceTitle?: string;
+  coverage?: "source";
 }
 
 export interface EditorProject {
-  version: 1;
+  version: 2;
   title: string;
   width: 1920;
   height: 1080;
@@ -155,12 +213,15 @@ export interface JobState {
   originalAudioName: string;
   audioFileName: string;
   brief: string;
+  ai?: AiRuntimeInfo;
   creativeBrief?: CreativeBrief;
   duration?: number;
   transcript?: TranscriptDocument;
+  visualPlan?: VisualPlan;
   visualUnits?: VisualUnit[];
   candidates?: YouTubeCandidate[];
   editPlan?: EditPlan;
+  baseCoverage?: BaseCoverage;
   timeline?: TimelineSegment[];
   editorProject?: EditorProject;
   media?: JobMedia;

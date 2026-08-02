@@ -20,6 +20,7 @@ function contentType(fileName: string) {
 function isAllowedMedia(fileName: string) {
   return /^(?:preview|final)\.mp4$/.test(fileName)
     || /^audio\.(?:mp3|m4a|wav|webm|mp4)$/.test(fileName)
+    || /^base\/base\.mp4$/.test(fileName)
     || /^segments\/segment-\d+\.mp4$/.test(fileName);
 }
 

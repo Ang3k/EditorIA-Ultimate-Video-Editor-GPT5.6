@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getAiRuntime } from "./config";
 import type { JobState } from "./types";
 
 const jobsRoot = path.join(process.cwd(), "work", "jobs");
@@ -48,6 +49,7 @@ export async function createJob(input: {
     originalAudioName: input.originalAudioName,
     audioFileName: input.audioFileName,
     brief: input.brief,
+    ai: getAiRuntime(),
   };
 
   await ensureJobDirectory(id);
